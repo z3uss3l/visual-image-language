@@ -1,3 +1,4 @@
+
 const $=id=>document.getElementById(id);
 const state={
  original:null,current:null,originalFile:null,running:false,generation:0,prompt:"",
@@ -142,10 +143,10 @@ function showMetrics(m,previous){
 function renderCandidates(){
  const c=$("candidates");c.innerHTML="";
  state.candidates.forEach((x,i)=>{
-	const d=document.createElement("div");d.className="candidate"+(x.selected?" selected":"");
-	const im=document.createElement("img");im.src=x.url;d.appendChild(im);
-	const s=document.createElement("div");s.className="score";s.textContent=`${x.label} | ${(x.metrics.composite*100).toFixed(2)}% | SSIM ${(x.metrics.ssim*100).toFixed(1)}%`;
-	d.appendChild(s);d.onclick=()=>{state.candidates.forEach(y=>y.selected=false);x.selected=true;renderCandidates();log(`Menschliche Auswahl: ${x.label}`,"good")};c.appendChild(d);
+  const d=document.createElement("div");d.className="candidate"+(x.selected?" selected":"");
+  const im=document.createElement("img");im.src=x.url;d.appendChild(im);
+  const s=document.createElement("div");s.className="score";s.textContent=`${x.label} | ${(x.metrics.composite*100).toFixed(2)}% | SSIM ${(x.metrics.ssim*100).toFixed(1)}%`;
+  d.appendChild(s);d.onclick=()=>{state.candidates.forEach(y=>y.selected=false);x.selected=true;renderCandidates();log(`Menschliche Auswahl: ${x.label}`,"good")};c.appendChild(d);
  });
 }
 
@@ -155,7 +156,7 @@ async function archiveCandidate(x){
  generation:state.generation,label:x.label,parent_id:state.parentId,
  prompt:x.prompt,description:state.description,metrics:x.metrics,
  previous_match:x.previousMetrics?.composite||0,human_selected:!!x.selected
- }));
+}));
  const r=await fetch("/api/archive",{method:"POST",body:fd});if(!r.ok)throw new Error(await r.text());const j=await r.json();
  $("archive").innerHTML+=`<div>G${state.generation} ${x.label}: ${j.run_id}</div>`;
 }
@@ -165,50 +166,50 @@ async function runRound(){
  log(`===== GENERATION ${g} =====`);
  const desc=await analyze(state.current);
  if(!state.prompt){
-	 state.prompt=await makePrompt(desc,"");
-	 $("prompt").value=state.prompt;
-	 log("Initialer Prompt-Adapter fertig.","good");
+   state.prompt=await makePrompt(desc,"");
+   $("prompt").value=state.prompt;
+   log("Initialer Prompt-Adapter fertig.","good");
  } else log("Bester Prompt wird als Ausgangspunkt verwendet.");
 
  const n=Math.min(2,Math.max(1,Number($("variants").value)));
  const directions=[
-	"conservative: improve measurable spatial geometry, normalized positions, scale and depth ordering; preserve all established facts",
-	"exploratory: improve camera/viewpoint, perspective, lighting and explicit visual relationships; preserve all established facts"
+  "conservative: improve measurable spatial geometry, normalized positions, scale and depth ordering; preserve all established facts",
+  "exploratory: improve camera/viewpoint, perspective, lighting and explicit visual relationships; preserve all established facts"
  ];
  state.candidates=[];
  for(let i=0;i<n;i++){
-	 const p=await mutatePrompt(state.prompt,desc,directions[i]);
-	 log(`Variante ${i+1}: ${p.slice(0,260)}${p.length>260?"…":""}`);
-	 const blob=await generate(p);
-	 const url=URL.createObjectURL(blob);
-	 const metrics=await compare(blob,state.originalFile);
-	 const previousMetrics=state.current!==state.originalFile ? await compare(blob,state.current) : null;
-	 state.candidates.push({
-		 label:String.fromCharCode(65+i),blob,url,prompt:p,metrics,previousMetrics,selected:false
-	 });
-	 log(`Variante ${String.fromCharCode(65+i)} Original ${(metrics.composite*100).toFixed(2)}% | vorher ${(previousMetrics?previousMetrics.composite*100:0).toFixed(2)}%`);
-	 await archiveCandidate(state.candidates.at(-1));
+   const p=await mutatePrompt(state.prompt,desc,directions[i]);
+   log(`Variante ${i+1}: ${p.slice(0,260)}${p.length>260?"…":""}`);
+   const blob=await generate(p);
+   const url=URL.createObjectURL(blob);
+   const metrics=await compare(blob,state.originalFile);
+   const previousMetrics=state.current!==state.originalFile ? await compare(blob,state.current) : null;
+   state.candidates.push({
+     label:String.fromCharCode(65+i),blob,url,prompt:p,metrics,previousMetrics,selected:false
+   });
+   log(`Variante ${String.fromCharCode(65+i)} Original ${(metrics.composite*100).toFixed(2)}% | vorher ${(previousMetrics?previousMetrics.composite*100:0).toFixed(2)}%`);
+   await archiveCandidate(state.candidates.at(-1));
  }
  renderCandidates();
 
  let winner;
  if($("mode").value==="human"||$("mode").value==="both"){
-	 const options=state.candidates.map(x=>`${x.label} = ${(x.metrics.composite*100).toFixed(2)}%`).join(" | ");
-	 const choice=prompt(
-		 `Generation ${g}: Welche Variante ist dem ORIGINAL am ähnlichsten?\n${options}\n\nA = Variante A\nB = Variante B\nE = gleich / unentschieden`,
-		 "A"
-	 );
-	 if((choice||"A").toUpperCase()==="E"){
-		 winner=[...state.candidates].sort((a,b)=>b.metrics.composite-a.metrics.composite)[0];
-		 log("Human: Unentschieden; automatische Auswahl des höheren Scores als Tie-Breaker.","warn");
-	 }else{
-		 const idx=(choice||"A").toUpperCase()==="B"?1:0;
-		 winner=state.candidates[Math.min(idx,state.candidates.length-1)];
-		 log(`Menschliches Urteil: ${winner.label}`,"good");
-	 }
+   const options=state.candidates.map(x=>`${x.label} = ${(x.metrics.composite*100).toFixed(2)}%`).join(" | ");
+   const choice=prompt(
+     `Generation ${g}: Welche Variante ist dem ORIGINAL am ähnlichsten?\n${options}\n\nA = Variante A\nB = Variante B\nE = gleich / unentschieden`,
+     "A"
+   );
+   if((choice||"A").toUpperCase()==="E"){
+     winner=[...state.candidates].sort((a,b)=>b.metrics.composite-a.metrics.composite)[0];
+     log("Human: Unentschieden; automatische Auswahl des höheren Scores als Tie-Breaker.","warn");
+   }else{
+     const idx=(choice||"A").toUpperCase()==="B"?1:0;
+     winner=state.candidates[Math.min(idx,state.candidates.length-1)];
+     log(`Menschliches Urteil: ${winner.label}`,"good");
+   }
  } else {
-	 winner=[...state.candidates].sort((a,b)=>b.metrics.composite-a.metrics.composite)[0];
-	 log(`Automatische Auswahl: ${winner.label}`,"good");
+   winner=[...state.candidates].sort((a,b)=>b.metrics.composite-a.metrics.composite)[0];
+   log(`Automatische Auswahl: ${winner.label}`,"good");
  }
  state.candidates.forEach(x=>x.selected=x===winner);
  renderCandidates();
@@ -229,35 +230,35 @@ async function runRound(){
  const plateauN=Number($("plateauN").value);
  const delta=Number($("plateauDelta").value);
  if(state.scoreHistory.length>=plateauN){
-	 const recent=state.scoreHistory.slice(-plateauN);
-	 const improvement=Math.max(...recent)-Math.min(...recent);
-	 state.plateau=improvement<delta;
+   const recent=state.scoreHistory.slice(-plateauN);
+   const improvement=Math.max(...recent)-Math.min(...recent);
+   state.plateau=improvement<delta;
  } else state.plateau=false;
 
  $("convergence").textContent=
-	 `G${g} | aktueller ${(winner.metrics.composite*100).toFixed(2)}% | Best ${(state.bestScore*100).toFixed(2)}% | `
-	 +`≥Schwelle ${state.stable}/${$("stableN").value} | Plateau ${state.plateau?"JA":"nein"}`;
+   `G${g} | aktueller ${(winner.metrics.composite*100).toFixed(2)}% | Best ${(state.bestScore*100).toFixed(2)}% | `
+   +`≥Schwelle ${state.stable}/${$("stableN").value} | Plateau ${state.plateau?"JA":"nein"}`;
 
  log(`Original-Match ${(winner.metrics.composite*100).toFixed(2)}%; Vorher ${(previousMatch?previousMatch.composite*100:0).toFixed(2)}%; Best ${(state.bestScore*100).toFixed(2)}%.`);
 
  if(state.stable>=Number($("stableN").value)){
-	 log("Abbruch: Schwelle über mehrere Generationen stabil erreicht.","good");state.running=false;return;
+   log("Abbruch: Schwelle über mehrere Generationen stabil erreicht.","good");state.running=false;return;
  }
  if(state.plateau && state.scoreHistory.length>=plateauN){
-	 log("Abbruch: messbares Plateau erreicht.","warn");state.running=false;return;
+   log("Abbruch: messbares Plateau erreicht.","warn");state.running=false;return;
  }
  state.generation++;
  if(state.generation>=Number($("maxGen").value)){
-	 log("Abbruch: maximale Generationenzahl erreicht.","warn");state.running=false;return;
+   log("Abbruch: maximale Generationenzahl erreicht.","warn");state.running=false;return;
  }
 }
 
 async function archiveWinnerLineage(x){
  const fd=new FormData();fd.append("image",x.blob,"winner.png");
  fd.append("metadata",JSON.stringify({
-	 generation:state.generation,label:`WINNER_${x.label}`,parent_id:state.parentId,
-	 prompt:x.prompt,description:state.description,metrics:x.metrics,
-	 previous_match:x.previousMetrics?.composite||0,human_selected:!!x.selected
+   generation:state.generation,label:`WINNER_${x.label}`,parent_id:state.parentId,
+   prompt:x.prompt,description:state.description,metrics:x.metrics,
+   previous_match:x.previousMetrics?.composite||0,human_selected:!!x.selected
  }));
  const r=await fetch("/api/archive",{method:"POST",body:fd});
  if(!r.ok)throw new Error(await r.text());
@@ -268,8 +269,8 @@ async function archiveWinnerLineage(x){
 }
 async function loop(){
  while(state.running){
-	try{await runRound()}catch(e){log("FEHLER: "+(e?.message||e),"bad");state.running=false}
-	if(state.running)await new Promise(r=>setTimeout(r,200));
+  try{await runRound()}catch(e){log("FEHLER: "+(e?.message||e),"bad");state.running=false}
+  if(state.running)await new Promise(r=>setTimeout(r,200));
  }
 }
 
@@ -285,13 +286,13 @@ $("analyzeNow").onclick=async()=>{
 };
 $("meta").onclick=async()=>{
  try{
-	 const r=await fetch("/api/history?limit=50");
-	 const rows=await r.json();
-	 const winners=rows.filter(x=>x.human_selected||String(x.label||"").startsWith("WINNER")).reverse().slice(-30);
-	 if(!winners.length && !state.prompt){log("Noch keine erfolgreichen Promptlinien vorhanden.","warn");return;}
-	 const material=(winners.length?winners:state.history).map((x,i)=>
-		 `PROMPT ${i+1}:\n${x.prompt}\nSCORE:${x.original_match??x.score}`).join("\n\n");
-	 const r2=await puter.ai.chat(`You are the meta-analysis engine of a visual reconstruction experiment.
+   const r=await fetch("/api/history?limit=50");
+   const rows=await r.json();
+   const winners=rows.filter(x=>x.human_selected||String(x.label||"").startsWith("WINNER")).reverse().slice(-30);
+   if(!winners.length && !state.prompt){log("Noch keine erfolgreichen Promptlinien vorhanden.","warn");return;}
+   const material=(winners.length?winners:state.history).map((x,i)=>
+     `PROMPT ${i+1}:\n${x.prompt}\nSCORE:${x.original_match??x.score}`).join("\n\n");
+   const r2=await puter.ai.chat(`You are the meta-analysis engine of a visual reconstruction experiment.
 Extract only evidence-based, recurring prompt structures from the successful candidates below.
 Distinguish stable patterns from one-off wording.
 Produce a reusable MASTER PROMPT TEMPLATE with explicit sections:
@@ -303,9 +304,9 @@ Do not claim universal validity without evidence.
 
 EXPERIMENTS:
 ${material}`,{model:$("visionModel").value});
-	 const t=extractText(r2);
-	 state.prompt=t;$("prompt").value=t;
-	 await fetch("/api/archive/meta",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"metadata="+encodeURIComponent(JSON.stringify({content:t,source_count:winners.length}))});
-	 log(`MetaMaster archiviert aus ${winners.length} erfolgreichen Experimenten.`,"good");
+   const t=extractText(r2);
+   state.prompt=t;$("prompt").value=t;
+   await fetch("/api/archive/meta",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"metadata="+encodeURIComponent(JSON.stringify({content:t,source_count:winners.length}))});
+   log(`MetaMaster archiviert aus ${winners.length} erfolgreichen Experimenten.`,"good");
  }catch(e){log("MetaMaster Fehler: "+e.message,"bad")}
 };

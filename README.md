@@ -32,7 +32,9 @@ Original → Description → Prompt → Competing Reconstructions → Multi-Metr
 - MetaMaster archive
 - convergence logic with plateau detection
 - local Ollama vision path
-- optional Puter cloud path
+- native Ollama API integration for analysis, prompt synthesis, mutations, and MetaMaster
+- dynamic list of locally downloaded Ollama models
+- optional local ComfyUI API adapter for image generation
 - no synthetic fake images or mock data
 
 ## Methodological change
@@ -71,15 +73,23 @@ Then open:
 
 http://127.0.0.1:8765
 
-### Ollama
+### Fully local and free
 
-If Ollama is already installed, the configured vision model is used.
+The language pipeline is independent of Puter.js and uses Ollama directly on `127.0.0.1:11434`. The UI reads the installed model list from Ollama, so changing or adding models requires no frontend edit.
 
 ```bash
 OLLAMA_MODEL=qwen3-vl:4b ~/Infinity-Reconstruction-Lab/run.sh
 ```
 
-The setup does not blindly install a package manager on Bazzite. If Ollama is missing, the Puter path remains available; Ollama can be added later according to the local Bazzite/Ollama setup.
+Recommended local model roles:
+
+- `qwen3-vl:4b` for fast vision analysis on modest hardware
+- `qwen3-vl:8b` for better descriptions when more VRAM/RAM is available
+- `qwen3:8b` for fast text-only prompt operations if a separate vision model is selected
+
+For local image generation, run ComfyUI on `127.0.0.1:8188` with a free SDXL or FLUX model and export an API-format workflow to `config/comfyui-workflow.json`. The backend injects the generated prompt, submits the workflow, waits for the result, and returns the image without a cloud account or API key. Ollama itself is a language/vision model runner and does not generate images, so ComfyUI is the local image provider.
+
+The setup does not blindly install system packages or services. Start Ollama with `ollama serve`; start ComfyUI using its own local installation. Both services remain optional and are accessed only through localhost.
 
 ## Experimental workflow
 
@@ -110,11 +120,11 @@ archive/experiments.sqlite3
 
 The original file remains in the browser as an immutable reference; candidates are archived with parent IDs, prompts, descriptions, metrics, and human selections.
 
-## Free local operation
+## Local operation
 
 The core is local and open source.
 
-Puter is only an optional remote path and depends on the valid user allowance or usage policy at the time of use. For reproducible research, the local Ollama/ComfyUI path should remain the long-term reference path.
+No Puter.js, cloud account, API key, or remote inference path is required by the application. Reproducible operation uses Ollama plus ComfyUI locally.
 
 ## Natural next step
 

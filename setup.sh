@@ -125,8 +125,7 @@ if command -v ollama >/dev/null 2>&1; then
     ollama pull "$MODEL" || log "WARNUNG: Modell konnte nicht automatisch geladen werden."
   fi
 else
-  log "Ollama nicht installiert. Lokaler Visionpfad bleibt deaktiviert."
-  log "Der Prototyp kann zunächst mit Puter laufen; für vollständig lokale Experimente Ollama separat installieren."
+  log "Ollama nicht installiert. Für die kostenlose Offline-Lösung Ollama installieren und erneut starten."
 fi
 
 cat > "$APP_DIR/run.sh" <<'RUN'
@@ -148,6 +147,9 @@ chmod +x "$APP_DIR/stop.sh"
 cat > "$APP_DIR/config/defaults.env" <<'CFG'
 OLLAMA_MODEL=qwen3-vl:4b
 OLLAMA_URL=http://127.0.0.1:11434
+OLLAMA_TIMEOUT=300
+COMFYUI_URL=http://127.0.0.1:8188
+COMFYUI_WORKFLOW=$APP_DIR/config/comfyui-workflow.json
 HOST=127.0.0.1
 PORT=8765
 CFG

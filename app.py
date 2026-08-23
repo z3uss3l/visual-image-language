@@ -25,6 +25,9 @@ STATIC.mkdir(exist_ok=True)
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3-vl:4b")
+OLLAMA_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT", "300"))
+COMFYUI_URL = os.getenv("COMFYUI_URL", "http://127.0.0.1:8188")
+COMFYUI_WORKFLOW = os.getenv("COMFYUI_WORKFLOW", str(ROOT / "config" / "comfyui-workflow.json"))
 HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8765"))
 
@@ -138,11 +141,22 @@ def compare_images(a_bytes: bytes, b_bytes: bytes):
     }
 
 
-def ollama_available():
+def ollama_request(path: str, method="get", **kwargs):
+    timeout = kwargs.pop("timeout", OLLAMA_TIMEOUT)
+    return requests.request(method, f"{OLLAMA_URL}{path}", timeout=timeout, **kwargs)
+
+
+def ollama_models():
     try:
-        return requests.get(f"{OLLAMA_URL}/api/tags", timeout=2).ok
+        response = ollama_request("/api/tags", timeout=2)
+        response.raise_for_status()
+        return response.json().get("models", [])
     except requests.RequestException:
-        return False
+        return []
+
+
+def ollama_available():
+    return bool(ollama_models())
 
 
 @app.get("/")
@@ -152,9 +166,71 @@ def index():
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "ollama": ollama_available(),
-            "ollama_model": OLLAMA_MODEL, "archive": str(ARCHIVE),
+    models = ollama_models()
+    return {"ok": True, "ollama": bool(models),
+            "ollama_model": OLLAMA_MODEL, "ollama_url": OLLAMA_URL,
+            "ollama_models": [model.get("name") for model in models],
+            "archive": str(ARCHIVE),
             "db": str(DB), "version": app.version}
+
+
+@app.get("/api/ollama/models")
+def ollama_model_list():
+    models = ollama_models()
+    return {"ok": bool(models), "url": OLLAMA_URL, "configured": OLLAMA_MODEL,
+            "models": models}
+
+
+@app.post("/api/ollama/chat")
+async def ollama_chat(request: dict):
+    model = request.get("model") or OLLAMA_MODEL
+    messages = request.get("messages")
+    if not messages:
+        raise HTTPException(400, "Ollama messages fehlen.")
+    try:
+        response = ollama_request("/api/chat", "post", json={
+            "model": model, "messages": messages, "stream": False,
+            "options": request.get("options", {"temperature": 0.1})
+        })
+        response.raise_for_status()
+        result = response.json()
+        return {"model": model, "text": result.get("message", {}).get("content", "")}
+    except requests.RequestException as e:
+        raise HTTPException(502, f"Ollama request failed: {e}")
+
+
+@app.post("/api/generate")
+async def generate_image(request: dict):
+    """Run a local ComfyUI API-format workflow with the prompt injected."""
+    workflow_path = Path(COMFYUI_WORKFLOW)
+    if not workflow_path.is_file():
+        raise HTTPException(503, "Lokaler Bildgenerator fehlt: ComfyUI-Workflow konfigurieren.")
+    try:
+        workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+        prompt = request.get("prompt", "")
+        for node in workflow.values():
+            if isinstance(node, dict) and node.get("class_type") == "CLIPTextEncode":
+                node.setdefault("inputs", {})["text"] = prompt
+        queued = requests.post(f"{COMFYUI_URL}/prompt", json={"prompt": workflow}, timeout=10)
+        queued.raise_for_status()
+        prompt_id = queued.json()["prompt_id"]
+        deadline = time.time() + OLLAMA_TIMEOUT
+        while time.time() < deadline:
+            result = requests.get(f"{COMFYUI_URL}/history/{prompt_id}", timeout=10)
+            result.raise_for_status()
+            history = result.json().get(prompt_id, {})
+            outputs = history.get("outputs", {})
+            for output in outputs.values():
+                for image in output.get("images", []):
+                    params = {"filename": image["filename"], "subfolder": image.get("subfolder", ""), "type": image.get("type", "output")}
+                    image_response = requests.get(f"{COMFYUI_URL}/view", params=params, timeout=30)
+                    image_response.raise_for_status()
+                    return {"content_type": image_response.headers.get("content-type", "image/png"),
+                            "image": base64.b64encode(image_response.content).decode("ascii")}
+            time.sleep(0.5)
+        raise HTTPException(504, "ComfyUI hat innerhalb des Zeitlimits kein Bild geliefert.")
+    except (OSError, json.JSONDecodeError, KeyError, requests.RequestException) as e:
+        raise HTTPException(502, f"Lokaler Bildgenerator fehlgeschlagen: {e}")
 
 
 @app.post("/api/compare")
@@ -227,19 +303,20 @@ def meta_history(limit: int = 20):
 
 
 @app.post("/api/ollama/analyze")
-async def ollama_analyze(file: UploadFile = File(...), instruction: str = ""):
-    if not ollama_available():
+async def ollama_analyze(file: UploadFile = File(...), instruction: str = "", model: str = ""):
+    if not ollama_models():
         raise HTTPException(503, "Lokales Ollama ist nicht erreichbar.")
     data = await file.read()
     b64 = base64.b64encode(data).decode("ascii")
     prompt = instruction or "Describe this image for faithful reconstruction. Do not invent."
-    payload = {"model": OLLAMA_MODEL,
+    selected_model = model or OLLAMA_MODEL
+    payload = {"model": selected_model,
                "messages": [{"role": "user", "content": prompt, "images": [b64]}],
                "stream": False, "options": {"temperature": 0.1}}
     try:
-        r = requests.post(f"{OLLAMA_URL}/api/chat", json=payload, timeout=300)
+        r = ollama_request("/api/chat", "post", json=payload)
         r.raise_for_status()
-        return {"model": OLLAMA_MODEL, "text": r.json().get("message", {}).get("content", "")}
+        return {"model": selected_model, "text": r.json().get("message", {}).get("content", "")}
     except requests.RequestException as e:
         raise HTTPException(502, f"Ollama request failed: {e}")
 

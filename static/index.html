@@ -8,7 +8,7 @@
 :root{color-scheme:dark;--bg:#090b10;--panel:#111620;--line:#293244;--text:#e8edf5;--muted:#8f9bad;--accent:#79b8ff;--good:#70d394;--warn:#ffd166;--bad:#ff7272}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:13px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 header{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:10px;align-items:center}
-h1{font-size:16px;margin:0}.status{color:var(--muted)}
+h1{font-size:16px;margin:0}.status{color:var(--muted)}#roundStatus{color:var(--accent);font-weight:bold}
 main{display:grid;grid-template-columns:340px minmax(500px,1fr) 390px;gap:10px;padding:10px;height:calc(100vh - 52px)}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:auto;padding:10px}
 .section{border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:10px}
@@ -20,6 +20,7 @@ button:hover{background:#20314a}button:disabled{opacity:.45;cursor:not-allowed}
 #boards{height:100%;display:grid;grid-template-columns:1fr 1fr;gap:10px}.board{display:flex;flex-direction:column;min-width:0}.board h2{font-size:12px;color:var(--muted);margin:0 0 6px}
 canvas{width:100%;height:auto;aspect-ratio:1/1;background:#000;border:1px solid var(--line);object-fit:contain}
 #candidates{display:grid;grid-template-columns:1fr 1fr;gap:6px}.candidate{border:1px solid var(--line);padding:5px;cursor:pointer}.candidate.selected{border-color:var(--good)}.candidate img{width:100%;display:block}.score{font-size:11px;color:var(--muted)}
+.rating{display:grid;grid-template-columns:repeat(10,1fr);gap:2px;margin-top:5px}.rating button{padding:4px 0;font-size:11px}.rating button.active{background:var(--accent);color:#07101c;border-color:var(--accent)}#decision{grid-column:1/-1;margin-top:6px}.decision-note{color:var(--warn);font-size:11px;margin-right:8px}
 #log{white-space:pre-wrap;font-size:11px;color:#b9c4d4}.logline{padding:2px 0;border-bottom:1px dotted #202735}.good{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}
 #prompt{height:170px;resize:vertical}.small{font-size:11px;color:var(--muted)}.metric{display:grid;grid-template-columns:1fr auto;gap:3px}.metric b{color:var(--text)}
 @media(max-width:1200px){main{grid-template-columns:280px 1fr}.panel:last-child{grid-column:1/-1;height:300px}#boards{height:auto}}
@@ -28,7 +29,7 @@ canvas{width:100%;height:auto;aspect-ratio:1/1;background:#000;border:1px solid 
 <body>
 <header>
   <h1>∞ INFINITY RECONSTRUCTION LAB</h1>
-  <div id="health" class="status">initialisiere …</div>
+  <div><span id="roundStatus">Bereit | Runde 0</span><span id="health" class="status"> · initialisiere …</span></div>
 </header>
 
 <main>
@@ -44,7 +45,7 @@ canvas{width:100%;height:auto;aspect-ratio:1/1;background:#000;border:1px solid 
 <label>Bildanalyse</label>
 <select id="analyzer"><option value="ollama">Ollama – lokal/offline</option></select>
 <label>Ollama-Modell</label>
-<select id="ollamaModel"><option value="qwen3-vl:4b">Modelle werden geladen …</option></select>
+<select id="ollamaModel"><option value="qwen3-vl:2b">Modelle werden geladen …</option></select>
 <div id="ollamaInfo" class="small"></div>
 </div>
 
@@ -93,6 +94,7 @@ canvas{width:100%;height:auto;aspect-ratio:1/1;background:#000;border:1px solid 
 <div class="section" style="margin-top:10px">
 <h2 style="font-size:12px;color:var(--muted)">KONKURRENTEN</h2>
 <div id="candidates"></div>
+<div id="decision"></div>
 </div>
 <div class="section">
 <h2 style="font-size:12px;color:var(--muted)">MATCH — ORIGINAL</h2>
@@ -256,14 +258,39 @@ function showMetrics(m,previous){
  $("previousMetrics").innerHTML=metricHTML(previous);
 }
 
+function humanScore(candidate){
+ if(!candidate.rating)return candidate.metrics.composite;
+ return 0.7*candidate.metrics.composite+0.3*(candidate.rating/10);
+}
+
 function renderCandidates(){
  const c=$("candidates");c.innerHTML="";
  state.candidates.forEach((x,i)=>{
   const d=document.createElement("div");d.className="candidate"+(x.selected?" selected":"");
   const im=document.createElement("img");im.src=x.url;d.appendChild(im);
   const s=document.createElement("div");s.className="score";s.textContent=`${x.label} | ${(x.metrics.composite*100).toFixed(2)}% | SSIM ${(x.metrics.ssim*100).toFixed(1)}%`;
-  d.appendChild(s);d.onclick=()=>{state.candidates.forEach(y=>y.selected=false);x.selected=true;renderCandidates();log(`Menschliche Auswahl: ${x.label}`,"good")};c.appendChild(d);
+  d.appendChild(s);
+  const rating=document.createElement("div");rating.className="rating";rating.setAttribute("aria-label",`Bewertung ${x.label} von 1 bis 10`);
+  for(let score=1;score<=10;score++){
+   const button=document.createElement("button");button.type="button";button.textContent=score;button.title=`${score} von 10`;
+   if(x.rating===score)button.className="active";
+   button.onclick=event=>{event.stopPropagation();x.rating=score;renderCandidates();log(`Bewertung ${x.label}: ${score}/10`,"good")};rating.appendChild(button);
+  }
+  d.appendChild(rating);d.onclick=()=>{state.candidates.forEach(y=>y.selected=false);x.selected=true;renderCandidates();log(`Vertreter markiert: ${x.label}`,"good")};c.appendChild(d);
  });
+ updateDecision();
+}
+
+function updateDecision(){
+ const d=$("decision");
+ if(!["human","both"].includes($("mode").value)||!state.candidates.length){d.innerHTML="";return}
+ const ready=state.candidates.every(x=>x.rating);
+ d.innerHTML=`<span class="decision-note">${ready?"Bewertungen vollständig.":"Bitte jede Variante von 1 bis 10 bewerten."}</span><button id="confirmWinner" ${ready&&state.candidates.some(x=>x.selected)?"":"disabled"}>Vertreter übernehmen</button>`;
+ $("confirmWinner").onclick=()=>{d.querySelector("button").disabled=true;d.resolve(state.candidates.find(x=>x.selected))};
+}
+
+function waitForHumanWinner(){
+ return new Promise(resolve=>{$("decision").resolve=resolve;updateDecision()});
 }
 
 async function archiveCandidate(x){
@@ -271,7 +298,7 @@ async function archiveCandidate(x){
  fd.append("metadata",JSON.stringify({
  generation:state.generation,label:x.label,parent_id:state.parentId,
  prompt:x.prompt,description:state.description,metrics:x.metrics,
- previous_match:x.previousMetrics?.composite||0,human_selected:!!x.selected
+ previous_match:x.previousMetrics?.composite||0,human_selected:!!x.selected,human_rating:x.rating
 }));
  const r=await fetch("/api/archive",{method:"POST",body:fd});if(!r.ok)throw new Error(await r.text());const j=await r.json();
  $("archive").innerHTML+=`<div>G${state.generation} ${x.label}: ${j.run_id}</div>`;
@@ -279,6 +306,7 @@ async function archiveCandidate(x){
 
 async function runRound(){
  const g=state.generation;
+ $("roundStatus").textContent=`Läuft | Runde ${g}`;
  log(`===== GENERATION ${g} =====`);
  const desc=await analyze(state.current);
  if(!state.prompt){
@@ -301,34 +329,27 @@ async function runRound(){
    const metrics=await compare(blob,state.originalFile);
    const previousMetrics=state.current!==state.originalFile ? await compare(blob,state.current) : null;
    state.candidates.push({
-     label:String.fromCharCode(65+i),blob,url,prompt:p,metrics,previousMetrics,selected:false
+     label:String.fromCharCode(65+i),blob,url,prompt:p,metrics,previousMetrics,selected:false,rating:null
    });
    log(`Variante ${String.fromCharCode(65+i)} Original ${(metrics.composite*100).toFixed(2)}% | vorher ${(previousMetrics?previousMetrics.composite*100:0).toFixed(2)}%`);
-   await archiveCandidate(state.candidates.at(-1));
  }
  renderCandidates();
 
  let winner;
  if($("mode").value==="human"||$("mode").value==="both"){
-   const options=state.candidates.map(x=>`${x.label} = ${(x.metrics.composite*100).toFixed(2)}%`).join(" | ");
-   const choice=prompt(
-     `Generation ${g}: Welche Variante ist dem ORIGINAL am ähnlichsten?\n${options}\n\nA = Variante A\nB = Variante B\nE = gleich / unentschieden`,
-     "A"
-   );
-   if((choice||"A").toUpperCase()==="E"){
-     winner=[...state.candidates].sort((a,b)=>b.metrics.composite-a.metrics.composite)[0];
-     log("Human: Unentschieden; automatische Auswahl des höheren Scores als Tie-Breaker.","warn");
-   }else{
-     const idx=(choice||"A").toUpperCase()==="B"?1:0;
-     winner=state.candidates[Math.min(idx,state.candidates.length-1)];
-     log(`Menschliches Urteil: ${winner.label}`,"good");
+   winner=await waitForHumanWinner();
+   log(`Menschliches Urteil: ${winner.label} (${winner.rating}/10)`,"good");
+   if($("mode").value==="both"){
+     winner=[...state.candidates].sort((a,b)=>(humanScore(b)+0.2*(b.selected?1:0))-(humanScore(a)+0.2*(a.selected?1:0)))[0];
+     log(`Kombinierte Auswahl: ${winner.label} (Score + Bewertung + Markierung).`,"good");
    }
  } else {
-   winner=[...state.candidates].sort((a,b)=>b.metrics.composite-a.metrics.composite)[0];
+   winner=[...state.candidates].sort((a,b)=>humanScore(b)-humanScore(a))[0];
    log(`Automatische Auswahl: ${winner.label}`,"good");
  }
  state.candidates.forEach(x=>x.selected=x===winner);
  renderCandidates();
+ for(const candidate of state.candidates)await archiveCandidate(candidate);
 
  const previousMatch=winner.previousMetrics;
  showMetrics(winner.metrics,previousMatch);
@@ -374,7 +395,7 @@ async function archiveWinnerLineage(x){
  fd.append("metadata",JSON.stringify({
    generation:state.generation,label:`WINNER_${x.label}`,parent_id:state.parentId,
    prompt:x.prompt,description:state.description,metrics:x.metrics,
-   previous_match:x.previousMetrics?.composite||0,human_selected:!!x.selected
+  previous_match:x.previousMetrics?.composite||0,human_selected:!!x.selected,human_rating:x.rating
  }));
  const r=await fetch("/api/archive",{method:"POST",body:fd});
  if(!r.ok)throw new Error(await r.text());
@@ -407,7 +428,7 @@ $("meta").onclick=async()=>{
    const winners=rows.filter(x=>x.human_selected||String(x.label||"").startsWith("WINNER")).reverse().slice(-30);
    if(!winners.length && !state.prompt){log("Noch keine erfolgreichen Promptlinien vorhanden.","warn");return;}
    const material=(winners.length?winners:state.history).map((x,i)=>
-     `PROMPT ${i+1}:\n${x.prompt}\nSCORE:${x.original_match??x.score}`).join("\n\n");
+     `PROMPT ${i+1}:\n${x.prompt}\nSCORE:${x.original_match??x.score}\nHUMAN RATING:${x.human_rating??"none"}`).join("\n\n");
   const t=await ollamaText(`You are the meta-analysis engine of a visual reconstruction experiment.
 Extract only evidence-based, recurring prompt structures from the successful candidates below.
 Distinguish stable patterns from one-off wording.

@@ -24,7 +24,7 @@ ARCHIVE.mkdir(exist_ok=True)
 STATIC.mkdir(exist_ok=True)
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3-vl:4b")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3-vl:2b")
 OLLAMA_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT", "300"))
 COMFYUI_URL = os.getenv("COMFYUI_URL", "http://127.0.0.1:8188")
 COMFYUI_WORKFLOW = os.getenv("COMFYUI_WORKFLOW", str(ROOT / "config" / "comfyui-workflow.json"))
@@ -47,7 +47,7 @@ def init_db():
             id TEXT PRIMARY KEY, created_at REAL NOT NULL, generation INTEGER,
             label TEXT, parent_id TEXT, prompt TEXT, description TEXT,
             metrics_json TEXT, human_selected INTEGER DEFAULT 0,
-            original_match REAL, previous_match REAL
+            original_match REAL, previous_match REAL, human_rating INTEGER
         );
         CREATE TABLE IF NOT EXISTS meta_prompts (
             id TEXT PRIMARY KEY, created_at REAL NOT NULL, source_count INTEGER,
@@ -55,6 +55,9 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS idx_exp_generation ON experiments(generation);
         """)
+        columns = {row[1] for row in c.execute("PRAGMA table_info(experiments)")}
+        if "human_rating" not in columns:
+            c.execute("ALTER TABLE experiments ADD COLUMN human_rating INTEGER")
 init_db()
 
 
@@ -260,14 +263,15 @@ async def archive(image: UploadFile = File(...), metadata: str = ""):
     with db() as c:
         c.execute("""INSERT OR REPLACE INTO experiments
             (id,created_at,generation,label,parent_id,prompt,description,metrics_json,
-             human_selected,original_match,previous_match)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?)""", (
+             human_selected,original_match,previous_match,human_rating)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""", (
             run_id, meta["archived_at"], int(meta.get("generation", -1)) if str(meta.get("generation","")).isdigit() else -1,
             meta.get("label"), meta.get("parent_id"), meta.get("prompt",""), meta.get("description",""),
             json.dumps(meta.get("metrics",{}), ensure_ascii=False),
             int(bool(meta.get("human_selected"))),
             float(meta.get("metrics",{}).get("composite",0)),
-            float(meta.get("previous_match",0))
+            float(meta.get("previous_match",0)),
+            int(meta["human_rating"]) if str(meta.get("human_rating", "")).isdigit() else None
         ))
     return {"ok": True, "run_id": run_id, "path": str(folder)}
 
@@ -289,7 +293,7 @@ async def archive_meta(metadata: str = ""):
 def history(limit: int = 100):
     with db() as c:
         rows = c.execute("""SELECT id,created_at,generation,label,parent_id,prompt,
-            human_selected,original_match,previous_match,metrics_json
+            human_selected,original_match,previous_match,metrics_json,human_rating
             FROM experiments ORDER BY created_at DESC LIMIT ?""", (max(1,min(limit,1000)),)).fetchall()
     return [dict(r) for r in rows]
 

@@ -2,12 +2,24 @@
 set -Eeuo pipefail
 
 APP_DIR="${HOME}/Infinity-Reconstruction-Lab"
-MODEL="${MODEL:-qwen3-vl:4b}"
+MODEL="${MODEL:-}"
 STATE_FILE="${APP_DIR}/.setup-state"
 BACKUP_DIR="${APP_DIR}/.setup-backup"
 
 log(){ printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
 die(){ log "ERROR: $*"; exit 1; }
+
+detect_model(){
+  local memory_gib
+  memory_gib="$(awk '/MemTotal/ {printf "%d", $2 / 1024 / 1024}' /proc/meminfo 2>/dev/null || printf '0')"
+  if [[ "$memory_gib" -ge 24 ]]; then
+    MODEL="qwen3-vl:4b"
+  else
+    MODEL="qwen3-vl:2b"
+    [[ "$memory_gib" -gt 0 && "$memory_gib" -lt 12 ]] && log "WARNUNG: Nur ${memory_gib} GiB RAM erkannt; verwende qwen3-vl:2b."
+  fi
+  log "RAM-basierte Modellwahl: ${memory_gib:-unbekannt} GiB -> $MODEL"
+}
 
 record_file(){
   local path="$1"
@@ -88,6 +100,7 @@ fi
 log "Infinity Reconstruction Lab — VLR Prototype v2"
 command -v python3 >/dev/null || die "python3 fehlt."
 command -v curl >/dev/null || die "curl fehlt."
+[[ -n "$MODEL" ]] || detect_model
 
 mkdir -p "$APP_DIR"/{static,archive,logs,config}
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -132,6 +145,9 @@ cat > "$APP_DIR/run.sh" <<'RUN'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 APP_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$APP_DIR/config/defaults.env" ]]; then
+  source "$APP_DIR/config/defaults.env"
+fi
 source "$APP_DIR/.venv/bin/activate"
 cd "$APP_DIR"
 exec python app.py
@@ -144,8 +160,8 @@ pkill -f "python .*Infinity-Reconstruction-Lab/app.py" 2>/dev/null || true
 STOP
 chmod +x "$APP_DIR/stop.sh"
 
-cat > "$APP_DIR/config/defaults.env" <<'CFG'
-OLLAMA_MODEL=qwen3-vl:4b
+cat > "$APP_DIR/config/defaults.env" <<CFG
+OLLAMA_MODEL=$MODEL
 OLLAMA_URL=http://127.0.0.1:11434
 OLLAMA_TIMEOUT=300
 COMFYUI_URL=http://127.0.0.1:8188

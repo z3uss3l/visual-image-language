@@ -1,5 +1,12 @@
+.venv/
+archive/*.sqlite3
+archive/gen_*/
+archive/originals/
+archive/metamaster_*.md
+logs/
+.setup-state
+.setup-backup/
 __pycache__/
 *.pyc
-.venv/
-.env
-.DS_Store
+archive/*.json
+*.swp

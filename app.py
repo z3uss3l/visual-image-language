@@ -1,249 +1,156 @@
-import base64
-import io
-import json
-import os
-import sqlite3
-import time
-import uuid
+import base64,json,os,time,uuid
 from pathlib import Path
-from typing import Optional
-
-import cv2
-import numpy as np
-import requests
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI,File,Form,HTTPException,UploadFile
 from fastapi.responses import FileResponse
-from PIL import Image
-from skimage.metrics import structural_similarity as ssim
+import requests
+from vlr_core import *
 
-ROOT = Path(__file__).resolve().parent
-ARCHIVE = ROOT / "archive"
-STATIC = ROOT / "static"
-DB = ARCHIVE / "experiments.sqlite3"
-ARCHIVE.mkdir(exist_ok=True)
-STATIC.mkdir(exist_ok=True)
+STATIC=ROOT/'static'; HOST=os.getenv('HOST','127.0.0.1'); PORT=int(os.getenv('PORT','8765'))
+app=FastAPI(title='Infinity Reconstruction Lab',version='3.2.0')
 
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3-vl:4b")
-HOST = os.getenv("HOST", "127.0.0.1")
-PORT = int(os.getenv("PORT", "8765"))
+def event(name:str,**fields):
+ payload={'event':name,'at':time.time(),**fields}
+ print('[VLR] '+json.dumps(payload,ensure_ascii=True),flush=True)
 
-app = FastAPI(title="Infinity Reconstruction Lab", version="2.0.0")
-
-
-def db():
-    c = sqlite3.connect(DB)
-    c.row_factory = sqlite3.Row
-    return c
-
-
-def init_db():
-    with db() as c:
-        c.executescript("""
-        CREATE TABLE IF NOT EXISTS experiments (
-            id TEXT PRIMARY KEY, created_at REAL NOT NULL, generation INTEGER,
-            label TEXT, parent_id TEXT, prompt TEXT, description TEXT,
-            metrics_json TEXT, human_selected INTEGER DEFAULT 0,
-            original_match REAL, previous_match REAL
-        );
-        CREATE TABLE IF NOT EXISTS meta_prompts (
-            id TEXT PRIMARY KEY, created_at REAL NOT NULL, source_count INTEGER,
-            content TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_exp_generation ON experiments(generation);
-        """)
-init_db()
-
-
-def load_image(data: bytes) -> np.ndarray:
-    arr = np.frombuffer(data, np.uint8)
-    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-    if img is None:
-        raise ValueError("Ungültige Bilddatei")
-    return img
-
-
-def resize_pair(a, b, size=(512, 512)):
-    return (cv2.resize(a, size, interpolation=cv2.INTER_AREA),
-            cv2.resize(b, size, interpolation=cv2.INTER_AREA))
-
-
-def cosine(a, b):
-    den = float(np.linalg.norm(a) * np.linalg.norm(b))
-    return float(np.dot(a, b) / den) if den else 1.0
-
-
-def gradient_similarity(a, b):
-    ga = cv2.Laplacian(cv2.cvtColor(a, cv2.COLOR_BGR2GRAY), cv2.CV_32F)
-    gb = cv2.Laplacian(cv2.cvtColor(b, cv2.COLOR_BGR2GRAY), cv2.CV_32F)
-    # Normalize to remove absolute contrast scale while retaining structure.
-    ga = (ga - ga.mean()) / (ga.std() + 1e-6)
-    gb = (gb - gb.mean()) / (gb.std() + 1e-6)
-    return max(0.0, min(1.0, (cosine(ga.ravel(), gb.ravel()) + 1) / 2))
-
-
-def color_similarity(a, b):
-    ah = cv2.cvtColor(a, cv2.COLOR_BGR2HSV)
-    bh = cv2.cvtColor(b, cv2.COLOR_BGR2HSV)
-    ha = cv2.calcHist([ah], [0, 1], None, [32, 32], [0, 180, 0, 256])
-    hb = cv2.calcHist([bh], [0, 1], None, [32, 32], [0, 180, 0, 256])
-    cv2.normalize(ha, ha); cv2.normalize(hb, hb)
-    corr = float(cv2.compareHist(ha, hb, cv2.HISTCMP_CORREL))
-    return max(0.0, min(1.0, (corr + 1.0) / 2.0))
-
-
-def edge_iou(a, b):
-    ag = cv2.cvtColor(a, cv2.COLOR_BGR2GRAY)
-    bg = cv2.cvtColor(b, cv2.COLOR_BGR2GRAY)
-    ea, eb = cv2.Canny(ag, 80, 180), cv2.Canny(bg, 80, 180)
-    inter = np.logical_and(ea > 0, eb > 0).sum()
-    union = np.logical_or(ea > 0, eb > 0).sum()
-    return float(inter / union) if union else 1.0
-
-
-def thumbnail_similarity(a, b):
-    # Low-frequency spatial appearance. More useful than raw pixel equality for generated images.
-    a = cv2.resize(a, (32, 32), interpolation=cv2.INTER_AREA).astype(np.float32) / 255
-    b = cv2.resize(b, (32, 32), interpolation=cv2.INTER_AREA).astype(np.float32) / 255
-    return max(0.0, min(1.0, (cosine(a.ravel(), b.ravel()) + 1) / 2))
-
-
-def compare_images(a_bytes: bytes, b_bytes: bytes):
-    a, b = resize_pair(load_image(a_bytes), load_image(b_bytes))
-    ag = cv2.cvtColor(a, cv2.COLOR_BGR2GRAY)
-    bg = cv2.cvtColor(b, cv2.COLOR_BGR2GRAY)
-    mse = float(np.mean((a.astype(np.float32) - b.astype(np.float32)) ** 2))
-    psnr = float(cv2.PSNR(a, b)) if mse > 0 else 99.0
-    ssim_score = float(ssim(ag, bg, data_range=255))
-    edge = edge_iou(a, b)
-    color = color_similarity(a, b)
-    grad = gradient_similarity(a, b)
-    thumb = thumbnail_similarity(a, b)
-
-    # Composite deliberately emphasizes structure/appearance rather than raw pixels.
-    composite = (
-        0.28 * ssim_score +
-        0.18 * edge +
-        0.18 * color +
-        0.18 * grad +
-        0.18 * thumb
-    )
-    return {
-        "mse": mse, "psnr_db": psnr, "ssim": ssim_score,
-        "edge_iou": edge, "color_similarity": color,
-        "gradient_similarity": grad, "thumbnail_similarity": thumb,
-        "composite": float(composite),
-        "threshold_98": bool(composite >= 0.98),
-        "metric_version": "vlr-composite-v2"
-    }
-
-
-def ollama_available():
-    try:
-        return requests.get(f"{OLLAMA_URL}/api/tags", timeout=2).ok
-    except requests.RequestException:
-        return False
-
-
-@app.get("/")
-def index():
-    return FileResponse(STATIC / "index.html")
-
-
-@app.get("/api/health")
+@app.get('/')
+def index():return FileResponse(STATIC/'index_v3.html')
+@app.get('/api/health')
 def health():
-    return {"ok": True, "ollama": ollama_available(),
-            "ollama_model": OLLAMA_MODEL, "archive": str(ARCHIVE),
-            "db": str(DB), "version": app.version}
+ r=runtime_status(); m=runtime_probe(model=OLLAMA_MODEL); return {'ok':True,'version':app.version,'runtime':r,'probe':m,'ollama':bool(models()),'ollama_model':OLLAMA_MODEL,'ollama_models':[x.get('name') for x in models()],'ollama_running':running(),'comfyui':comfy(),'memory':mem(),'archive':str(ARCHIVE)}
+@app.get('/api/resources')
+def resources():return {'memory':mem(),'runtime':runtime_status(),'probe':runtime_probe(model=OLLAMA_MODEL),'ollama_running':running(),'comfyui':comfy()}
+@app.get('/api/ollama/models')
+def model_list():
+ ms=models(); return {'ok':bool(ms),'url':ollama_url(),'configured':OLLAMA_MODEL,'models':ms,'probe':runtime_probe(model=OLLAMA_MODEL)}
+@app.post('/api/ollama/chat')
+def ollama_api(request:dict):
+ if not request.get('messages'):raise HTTPException(400,'Ollama messages fehlen.')
+ phase_start('ollama')
+ try:
+  text,result=chat(request['messages'],request.get('model'),request.get('keep_alive'),request.get('options'))
+  return {'model':request.get('model') or OLLAMA_MODEL,'text':text,'load_duration':result.get('load_duration'),'eval_duration':result.get('eval_duration')}
+ finally:
+  if runtime_cfg().mode in ('podman','auto'): phase_stop('ollama')
+@app.post('/api/ollama/analyze')
+async def analyze(file:UploadFile=File(...),instruction:str='',model:str=''):
+ data=await file.read();selected=model or OLLAMA_MODEL;b64=base64.b64encode(data).decode('ascii');phase_start('ollama')
+ try:
+  text,result=chat([{'role':'user','content':instruction or 'Describe this image factually for faithful reconstruction.','images':[b64]}],selected,'5m',{'temperature':.05,'num_ctx':4096,'num_predict':1800});return {'model':selected,'text':text,'load_duration':result.get('load_duration')}
+ finally:
+  if runtime_cfg().mode in ('podman','auto'): phase_stop('ollama')
+@app.post('/api/ollama/unload')
+def unload(request:dict|None=None):
+ m=(request or {}).get('model') or OLLAMA_MODEL;return {'ok':unload_ollama(m),'model':m,'running_after':running()}
+@app.post('/api/comfyui/unload')
+def unload_comfy():
+ if runtime_cfg().mode in ('podman','auto'): return phase_stop('comfyui')
+ return {'ok':free_comfy(),'stats_after':comfy()}
+@app.post('/api/generate')
+async def generate(request:dict):
+ # Hard phase boundary: no Qwen/Ollama container may remain while ComfyUI runs.
+ if runtime_cfg().mode in ('podman','auto'):
+  phase_stop('ollama')
+ request_id=uuid.uuid4().hex[:12];started=time.monotonic()
+ event('generation_start',request_id=request_id,generation=request.get('generation'),candidate=request.get('candidate'))
+ phase_start('comfyui')
+ try:
+  path=Path(COMFYUI_WORKFLOW)
+  if not path.is_file():
+   raise HTTPException(503,'ComfyUI-Workflow fehlt.')
+  try:
+   workflow=json.loads(path.read_text(encoding='utf-8'))
+  except Exception as e:
+   raise HTTPException(500,f'Workflow ungültig: {e}')
+  for node in workflow.values():
+   if isinstance(node,dict) and node.get('class_type')=='CLIPTextEncode':
+    node.setdefault('inputs',{})['text']=request.get('prompt','')
+  try:
+   q=requests.post(f'{comfyui_url()}/prompt',json={'prompt':workflow},timeout=10)
+   q.raise_for_status(); pid=q.json()['prompt_id']; deadline=time.time()+OLLAMA_TIMEOUT
+   while time.time()<deadline:
+    h=requests.get(f'{comfyui_url()}/history/{pid}',timeout=10); h.raise_for_status()
+    for out in h.json().get(pid,{}).get('outputs',{}).values():
+     for im in out.get('images',[]):
+      r=requests.get(f'{comfyui_url()}/view',params={'filename':im['filename'],'subfolder':im.get('subfolder',''),'type':im.get('type','output')},timeout=30)
+      r.raise_for_status()
+      elapsed=round(time.monotonic()-started,3)
+      event('generation_complete',request_id=request_id,generation=request.get('generation'),candidate=request.get('candidate'),seconds=elapsed)
+      return {'content_type':r.headers.get('content-type','image/png'),'image':base64.b64encode(r.content).decode('ascii'),'request_id':request_id,'seconds':elapsed}
+    time.sleep(.5)
+   raise HTTPException(504,'ComfyUI Zeitlimit überschritten.')
+  except requests.RequestException as e:
+   raise HTTPException(502,f'ComfyUI fehlgeschlagen: {e}')
+ except Exception as exc:
+  event('generation_failed',request_id=request_id,generation=request.get('generation'),candidate=request.get('candidate'),error=str(exc))
+  raise
+ finally:
+  if runtime_cfg().mode in ('podman','auto') and not request.get('keep_runtime', False):
+   phase_stop('comfyui')
+@app.get('/api/runtime')
+def runtime(): return {'status':runtime_status(),'probe':runtime_probe(model=OLLAMA_MODEL)}
 
+@app.post('/api/runtime/select')
+def runtime_select(request:dict):
+ mode=str(request.get('mode','')).lower()
+ if mode not in {'native','podman','auto'}: raise HTTPException(400,'Runtime muss native, podman oder auto sein.')
+ old=runtime_cfg().mode
+ if old != mode and old in {'podman','auto'}:
+  phase_stop('comfyui'); phase_stop('ollama')
+ set_runtime_mode(mode)
+ return {'ok':True,'previous':old,'selected':mode,'status':runtime_status(),'probe':runtime_probe(mode=mode,model=OLLAMA_MODEL)}
 
-@app.post("/api/compare")
-async def compare(reference: UploadFile = File(...), candidate: UploadFile = File(...)):
-    try:
-        return compare_images(await reference.read(), await candidate.read())
-    except Exception as e:
-        raise HTTPException(400, f"Vergleich fehlgeschlagen: {e}")
+@app.post('/api/runtime/probe')
+def runtime_probe_api(request:dict|None=None):
+ r=request or {}; return runtime_probe(mode=r.get('mode') or runtime_cfg().mode,model=r.get('model') or OLLAMA_MODEL)
 
+@app.post('/api/runtime/prepare')
+def runtime_prepare(request:dict|None=None):
+ r=request or {}; mode=r.get('mode') or runtime_cfg().mode
+ if mode == 'native': return runtime_probe(mode='native',model=r.get('model') or OLLAMA_MODEL)
+ try:
+  phase_start('ollama')
+ except HTTPException:
+  raise
+ return runtime_probe(mode=mode,model=r.get('model') or OLLAMA_MODEL)
 
-@app.post("/api/archive")
-async def archive(image: UploadFile = File(...), metadata: str = ""):
-    run_id = uuid.uuid4().hex
-    try:
-        meta = json.loads(metadata) if metadata else {}
-    except json.JSONDecodeError:
-        meta = {"raw_metadata": metadata}
-    generation = str(meta.get("generation", "unknown"))
-    folder = ARCHIVE / f"gen_{generation}_{run_id[:8]}"
-    folder.mkdir(parents=True, exist_ok=True)
-    image_path = folder / "image.png"
-    data = await image.read()
-    image_path.write_bytes(data)
-    meta.update({"run_id": run_id, "archived_at": time.time(),
-                 "image": str(image_path.relative_to(ROOT))})
-    (folder / "metadata.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-    with db() as c:
-        c.execute("""INSERT OR REPLACE INTO experiments
-            (id,created_at,generation,label,parent_id,prompt,description,metrics_json,
-             human_selected,original_match,previous_match)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?)""", (
-            run_id, meta["archived_at"], int(meta.get("generation", -1)) if str(meta.get("generation","")).isdigit() else -1,
-            meta.get("label"), meta.get("parent_id"), meta.get("prompt",""), meta.get("description",""),
-            json.dumps(meta.get("metrics",{}), ensure_ascii=False),
-            int(bool(meta.get("human_selected"))),
-            float(meta.get("metrics",{}).get("composite",0)),
-            float(meta.get("previous_match",0))
-        ))
-    return {"ok": True, "run_id": run_id, "path": str(folder)}
-
-
-@app.post("/api/archive/meta")
-async def archive_meta(metadata: str = ""):
-    try: meta = json.loads(metadata)
-    except json.JSONDecodeError: meta = {}
-    mid = uuid.uuid4().hex
-    content = meta.get("content","")
-    with db() as c:
-        c.execute("INSERT INTO meta_prompts VALUES (?,?,?,?)",
-                  (mid, time.time(), int(meta.get("source_count",0)), content))
-    (ARCHIVE / f"metamaster_{mid[:8]}.md").write_text(content, encoding="utf-8")
-    return {"ok": True, "id": mid}
-
-
-@app.get("/api/history")
-def history(limit: int = 100):
-    with db() as c:
-        rows = c.execute("""SELECT id,created_at,generation,label,parent_id,prompt,
-            human_selected,original_match,previous_match,metrics_json
-            FROM experiments ORDER BY created_at DESC LIMIT ?""", (max(1,min(limit,1000)),)).fetchall()
-    return [dict(r) for r in rows]
-
-
-@app.get("/api/meta-history")
-def meta_history(limit: int = 20):
-    with db() as c:
-        rows = c.execute("SELECT * FROM meta_prompts ORDER BY created_at DESC LIMIT ?",
-                         (max(1,min(limit,100)),)).fetchall()
-    return [dict(r) for r in rows]
-
-
-@app.post("/api/ollama/analyze")
-async def ollama_analyze(file: UploadFile = File(...), instruction: str = ""):
-    if not ollama_available():
-        raise HTTPException(503, "Lokales Ollama ist nicht erreichbar.")
-    data = await file.read()
-    b64 = base64.b64encode(data).decode("ascii")
-    prompt = instruction or "Describe this image for faithful reconstruction. Do not invent."
-    payload = {"model": OLLAMA_MODEL,
-               "messages": [{"role": "user", "content": prompt, "images": [b64]}],
-               "stream": False, "options": {"temperature": 0.1}}
-    try:
-        r = requests.post(f"{OLLAMA_URL}/api/chat", json=payload, timeout=300)
-        r.raise_for_status()
-        return {"model": OLLAMA_MODEL, "text": r.json().get("message", {}).get("content", "")}
-    except requests.RequestException as e:
-        raise HTTPException(502, f"Ollama request failed: {e}")
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host=HOST, port=PORT)
+@app.post('/api/runtime/start')
+def runtime_start(request:dict): return phase_start(request.get('phase','ollama'))
+@app.post('/api/runtime/stop')
+def runtime_stop(request:dict): return phase_stop(request.get('phase','ollama'))
+@app.post('/api/compare')
+async def compare_api(reference:UploadFile=File(...),candidate:UploadFile=File(...)):return cmp(await reference.read(),await candidate.read())
+@app.post('/api/archive/original')
+async def archive_reference(file:UploadFile=File(...)):
+ data=await file.read();return {'ok':True,'path':archive_original(data)}
+@app.post('/api/archive/original-description')
+def original_description(payload:dict):
+ p=ARCHIVE/'original-description.md';content=str(payload.get('content',''))
+ if not content.strip():raise HTTPException(400,'Originalbeschreibung fehlt.')
+ if not p.exists():p.write_text(content,encoding='utf-8')
+ return {'ok':True,'immutable':True}
+@app.post('/api/archive')
+async def archive(image:UploadFile=File(...),metadata:str=Form('')):
+ try:m=json.loads(metadata) if metadata else {}
+ except json.JSONDecodeError:m={}
+ return {'ok':True,'run_id':archive_exp(m,await image.read())}
+@app.get('/api/history')
+def history(limit:int=100):
+ with db() as c:r=c.execute('SELECT id,created_at,generation,label,parent_id,prompt,human_selected,original_match,previous_match,metrics_json,human_rating,mutation_type,mutation_feedback,seed,image_path,image_retained,is_winner,is_best FROM experiments ORDER BY created_at DESC LIMIT ?',(max(1,min(limit,1000)),)).fetchall()
+ return [dict(x) for x in r]
+@app.post('/api/retention')
+def retention_api(request:dict):
+ if request.get('full_history'):return {'ok':True,'mode':'full','deleted':0}
+ return {'ok':True,'mode':'retained',**retention(int(request.get('current_generation',0)),int(request.get('keep_last',RETENTION_LAST)),bool(request.get('keep_improvements',RETENTION_KEEP_IMPROVEMENTS)),float(request.get('min_improvement',RETENTION_MIN_IMPROVEMENT)))}
+@app.post('/api/archive/meta')
+def meta(metadata:str=Form('')):
+ try:m=json.loads(metadata)
+ except json.JSONDecodeError:m={}
+ mid=os.urandom(8).hex();content=m.get('content','')
+ with db() as c:c.execute('INSERT INTO meta_prompts VALUES(?,?,?,?)',(mid,time.time(),int(m.get('source_count',0)),content))
+ (ARCHIVE/f'metamaster_{mid}.md').write_text(content,encoding='utf-8');return {'ok':True,'id':mid}
+@app.get('/api/meta-history')
+def meta_history(limit:int=20):
+ with db() as c:r=c.execute('SELECT * FROM meta_prompts ORDER BY created_at DESC LIMIT ?',(max(1,min(limit,100)),)).fetchall()
+ return [dict(x) for x in r]
+if __name__=='__main__':
+ import uvicorn;uvicorn.run(app,host=HOST,port=PORT)

@@ -1,0 +1,2 @@
+# Reference only: the VLR runtime normally pulls the official image directly.
+FROM docker.io/ollama/ollama:latest

@@ -1,52 +1,111 @@
-# Infinity Reconstruction Lab — VLR Experimental Prototype v2
+# Infinity Reconstruction Lab — VLR v3.2
 
-Das Toolkit wurde auf den im Projekt definierten **Visual Language Reconstruction (VLR)**-Versuchsaufbau erweitert.
+Das Infinity Reconstruction Lab untersucht experimentell, wie weit sich ein konkretes Bild ausschließlich durch sprachliche Beschreibung rekonstruieren lässt.
 
-## Was jetzt im Prototyp steckt
+Der Prototyp verwendet bewusst **ein KI-Modell zur Zeit**. Auf einem Rechner mit 32 GB gemeinsamem RAM und einer Radeon 780M soll dadurch vermieden werden, dass ein großes Qwen-Modell und ein Bildgenerator gleichzeitig den Speicher blockieren.
 
-**Original → Beschreibung → Prompt → konkurrierende Rekonstruktionen → Multi-Metrik → Human Ranking → Archiv → nächste Generation**
+## Experimenteller Loop
 
-Zusätzlich:
+```text
+Original
+  ↓
+Qwen Vision/Reasoning
+  ↓
+kanonische Beschreibung
+  ↓
+Prompt / zwei gezielte Mutationen
+  ↓
+Qwen UNLOAD
+  ↓
+ComfyUI Bildgeneration
+  ↓
+ComfyUI UNLOAD / Memory Free
+  ↓
+objektive Bildmetriken
+  ↓
+Human A/B Ranking
+  ↓
+Winner
+  ↓
+Archiv + Retention
+  ↓
+Qwen wieder laden
+  ↓
+nächste Generation
+```
 
-- unveränderliches Original als Referenz für **jede** Generation
-- Vergleich des Kandidaten sowohl mit dem Original als auch mit dem vorherigen Gewinner
-- getrennte Metriken statt blindem Pixel-98%-Kriterium
-- transparenter Composite-Score
-- strukturelle und farbliche Metriken
-- räumlich niedrigfrequente Thumbnail-Ähnlichkeit
-- Gradienten-/Strukturähnlichkeit
-- SQLite-Experimentarchiv
-- vollständiger Prompt-/Parent-Stammbaum
-- Human-in-the-loop Paarvergleich
-- MetaMaster-Archiv
-- stabile Konvergenzbedingung + Plateau-Abbruch
-- lokaler Ollama-Visionpfad
-- Puter als optionaler kostenloser/allowance-basierter Cloudpfad
-- keine synthetischen Fake-Bilder und keine Mock-Daten
+Qwen wird innerhalb einer Analyse-/Optimierungsphase über `keep_alive` resident gehalten. Vor dem Generator wird es explizit über Ollamas `keep_alive: 0` entladen. Nach der Generierung wird ComfyUI über `POST /free` mit `unload_models=true` und `free_memory=true` freigegeben. Diese Endpunkte sind Bestandteil der aktuellen APIs. Die Anwendung prüft danach den Zustand, anstatt nur anzunehmen, dass Speicher freigegeben wurde.
 
-## Wichtige methodische Änderung
+## Modell
 
-Die 98%-Schwelle bedeutet **nicht** 98% Pixelidentität.
+Standard ist:
 
-Der Composite-Score v2 kombiniert:
+```text
+qwen3.8:27b
+```
+
+Das Modell wird **nicht automatisch heruntergeladen**. Das Setup verwendet ein bereits lokal vorhandenes Modell und warnt lediglich, wenn es nicht sichtbar ist.
+
+Ein anderes Modell kann über `MODEL=... ./setup.sh` konfiguriert werden.
+
+## Architektur
+
+- FastAPI/Python Backend
+- Browser-UI ohne Build-Schritt
+- Ollama als einzelnes lokales Vision-/Reasoning-Modell
+- ComfyUI als lokaler Bildgenerator
+- OpenCV + scikit-image als deterministische Baseline-Evaluation
+- SQLite für vollständige Prompt-/Score-/Abstammungsmetadaten
+- Human-in-the-loop als finale Auswahl im Human-Modus
+- Retention Policy für Bilddateien
+- MetaMaster aus archivierten erfolgreichen Promptlinien
+
+### Wichtige Trennung
+
+Die **Originalbeschreibung bleibt konzeptionell Referenzmaterial**. Der aktuelle Gewinner wird zwar erneut beschrieben, aber diese neue Beschreibung ersetzt nicht rückwirkend die Originalreferenz.
+
+Der aktuelle Composite ist:
 
 - SSIM
 - Edge IoU
-- HSV-Farbverteilung
-- Gradientenstruktur
-- 32×32-Low-Frequency-Appearance
+- HSV-Farbähnlichkeit
+- Gradientensimilarität
+- Low-resolution Thumbnail Similarity
 
-Das ist bewusst ein erster Experimentator. Später können LPIPS, DINO/CLIP und ein menschlich kalibriertes Rankingmodell als weitere unabhängige Dimensionen ergänzt werden.
+Er wird als **VLR Composite v3** bezeichnet. `98 %` bedeutet `0.98 VLR Composite`, nicht 98 % Pixelidentität und nicht automatisch 98 % menschliche Wahrnehmungsähnlichkeit.
 
-## Konvergenz
+## Human-in-the-loop
 
-Ein Lauf beendet sich bei:
+Im Human-Modus entscheidet der Mensch endgültig. Eine technische Punktzahl darf die explizite menschliche Auswahl nicht überschreiben.
 
-1. Composite ≥ Schwelle über N aufeinanderfolgende Generationen, **oder**
-2. fehlendem messbarem Fortschritt über mehrere Generationen (Plateau), **oder**
-3. Maximalgeneration.
+Bewertungen und Auswahl werden mit archiviert und stehen später für die Kalibrierung einer besseren Bewertungsfunktion zur Verfügung.
 
-Jede Generation bleibt trotzdem im Archiv.
+## Retention Policy
+
+Default:
+
+```text
+letzte 5 Generationen behalten
++ Verbesserungsstände behalten
++ Winner/Best schützen
++ Original immer behalten
+```
+
+Ältere Bilddateien werden entfernt, **aber ihre SQLite-/JSON-Metadaten bleiben erhalten**. Damit bleibt die Experimenthistorie analytisch vollständig, ohne die Festplatte mit überholten PNGs zu füllen.
+
+Die UI kann jederzeit auf:
+
+```text
+Vollständige Bildhistorie behalten
+```
+
+umgestellt werden.
+
+## Performance-Modus
+
+`run.sh` ruft vor dem Start `prepare-performance.sh` auf. Dieses Script darf ausschließlich bekannte, benutzerseitige Desktop-Anwendungen beenden, die typischerweise unnötig RAM/GPU verbrauchen. Es deaktiviert **keine** System-, Sicherheits-, Netzwerk-, Audio-, Display- oder Update-Dienste.
+
+Das Performance-Profil wird, falls `powerprofilesctl` vorhanden ist, auf `performance` gestellt.
 
 ## Installation
 
@@ -56,63 +115,101 @@ chmod +x setup.sh
 ~/Infinity-Reconstruction-Lab/run.sh
 ```
 
-Dann:
-
-`http://127.0.0.1:8765`
-
-### Ollama
-
-Wenn Ollama bereits installiert ist, wird das konfigurierte Vision-Modell verwendet.
+Ollama muss separat laufen. Prüfen:
 
 ```bash
-OLLAMA_MODEL=qwen3-vl:4b ~/Infinity-Reconstruction-Lab/run.sh
+ollama list
+ollama ps
 ```
 
-Das Setup installiert **nicht blind** irgendeinen Paketmanager auf Bazzite. Falls Ollama fehlt, bleibt der Puter-Pfad verfügbar; Ollama kann anschließend entsprechend der eigenen Bazzite-/Ollama-Installation ergänzt werden.
+ComfyUI muss im Native-Modus auf `127.0.0.1:8188` bzw. im Podman-Modus auf `127.0.0.1:8189` laufen und einen API-Workflow unter
 
-## Experimental workflow
+```text
+config/comfyui-workflow.json
+```
 
-1. Goldbild laden.
-2. `Nur analysieren`.
-3. Beschreibung prüfen.
-4. Loop starten.
-5. Zwei konkurrierende Promptmutationen erzeugen.
-6. Beide Kandidaten gegen das Original messen.
-7. Bei Human/Both A/B auswählen.
-8. Gewinner wird neue Promptbasis.
-9. Archiv wächst generationenweise.
-10. `MetaMaster erzeugen` analysiert die gespeicherten Gewinner.
+bereitstellen.
 
-## Noch bewusst nicht behauptet
+## Prüfung
 
-Der Prototyp behauptet nicht, dass sein Composite-Score menschliche visuelle Ähnlichkeit perfekt abbildet. Genau deshalb wird Human Ranking gespeichert. Das nächste Entwicklungsziel ist eine unabhängige Perceptual-Metrikschicht und danach die Kalibrierung des automatischen Scores gegen menschliche Paarentscheidungen.
+Vor einem echten Experiment sollte:
 
-## Daten
+1. `/api/health` Ollama und ComfyUI erkennen,
+2. `qwen3.8:27b` in Ollama sichtbar sein,
+3. ein Bild geladen und als Original archiviert werden,
+4. eine Analyse funktionieren,
+5. Qwen nach der Analyse/Mutation nicht mehr unter `ollama ps` erscheinen,
+6. ComfyUI ein Bild erzeugen,
+7. ComfyUI nach `/free` keine residenten Modelle mehr melden,
+8. die Metrikberechnung laufen,
+9. Human-Auswahl nicht durch den Composite überschrieben werden,
+10. Retention alte Bilddateien entfernen, aber Metadaten behalten.
 
-Alle experimentellen Artefakte liegen unter:
+## Grenzen
 
-`~/Infinity-Reconstruction-Lab/archive/`
+VLR v3.2 ist noch keine trainierte Wahrnehmungsmetrik. LPIPS/DINO/CLIP und eine statistische Kalibrierung gegen Human Rankings sind die nächsten wissenschaftlichen Ausbaustufen.
 
-Die SQLite-Datenbank ist:
+## Storage Audit
 
-`archive/experiments.sqlite3`
+Für die Suche nach großen Dateien und bekannten Cache-Verzeichnissen:
 
-Die Originaldatei wird im Browser als unveränderliche Referenz gehalten; Kandidaten werden mit `parent_id`, Prompt, Beschreibung, Metriken und Human-Auswahl archiviert.
+```bash
+~/Infinity-Reconstruction-Lab/storage-audit.sh
+```
 
-## Kostenloser Betrieb
+Der Audit löscht nichts. Er schreibt einen Bericht nach `logs/`. Das ist absichtlich getrennt von der VLR-Archiv-Retention: Modellgewichte und andere große Dateien sind nicht automatisch „Datenleichen“.
 
-Der Kern ist lokal und Open Source.
+## Podman-Runtime (Bazzite empfohlen)
 
-Puter ist nur ein optionaler Remote-Pfad und hängt von dessen jeweils gültiger Benutzer-/Nutzungsfreigabe ab. Für reproduzierbare Forschung sollte der lokale Ollama/ComfyUI-Pfad die langfristige Referenz bleiben.
+VLR 3.2 unterstützt einen Podman-/Quadlet-first Modus. Wenn die komplette Containerkonfiguration gesetzt ist, wird genau **ein KI-Container pro Phase** betrieben:
 
-## Nächster sinnvoller Ausbau
+`Ollama/Qwen → unload → Container stop → ComfyUI → /free → Container stop → Evaluation`
 
-- ComfyUI als lokaler Generatoradapter
-- echte LPIPS/DINO/CLIP-Metriken
-- Seed-/Parameter-Tracking
-- mehrere Seeds je Prompt
-- Beam Search statt nur zwei Varianten
-- Blindes Human Pairwise Ranking
-- trainierbares Human-Calibrated Similarity Model
-- Benchmark-Datensatz und Train/Test-Split
-- Meta-Grammar statt bloßem Meta-Prompt
+Damit gibt es sowohl Modell-Unload als auch eine harte Prozessgrenze. Die persistenten Podman-Volumes behalten Modelle und Nutzdaten, obwohl die Container gestoppt werden.
+
+Standardports der Container sind `11435` (Ollama) und `8189` (ComfyUI), damit vorhandene native Dienste auf `11434/8188` nicht verdrängt werden.
+
+### Konfiguration
+
+In `config/defaults.env`:
+
+- `VLR_RUNTIME=podman` — Standard und empfohlen für Bazzite/Radeon 780M; Podman zwingend.
+- `VLR_RUNTIME=auto` — optionaler Kompatibilitätsmodus mit native fallback.
+- `VLR_RUNTIME=native` — Containerorchestrierung aus.
+- `VLR_OLLAMA_IMAGE=docker.io/ollama/ollama:latest`
+- `VLR_COMFYUI_IMAGE=...` — muss für den Podman-ComfyUI-Teil gesetzt werden.
+
+### Bazzite/AMD
+
+Rootless Podman erhält `/dev/dri` und `/dev/kfd` nur dann, wenn die Geräte auf dem Host vorhanden sind, und nutzt `--group-add keep-groups`. Für die Zielhardware Radeon 780M wird Ollama bevorzugt mit Vulkan betrieben; ein `HSA_OVERRIDE_GFX_VERSION` wird nicht pauschal gesetzt. Es werden keine SELinux-Regeln oder Systemdienste automatisch verändert. Ollamas offizielles Container-Image unterstützt AMD und Vulkan; VLR aktiviert Vulkan standardmäßig.
+
+### Setup-Verhalten
+
+`./setup` bzw. `./setup.sh` ist **installations-only**: Das Setup startet weder Ollama noch ComfyUI noch die VLR-Webanwendung automatisch. Nach erfolgreichem Setup liegen `~/Infinity-Reconstruction-Lab/setup` und `setup.sh` auch im Zielverzeichnis, sodass ein späteres Reparatur-/Update-Setup direkt dort erneut ausgeführt werden kann. Fehler werden mit Zeile und ausgeführtem Befehl ausgegeben. Container-Images werden erst beim expliziten Runtime-Start gepullt; der Image-Pull unterliegt keinem kurzen Healthcheck-Timeout und zeigt den Podman-Fortschritt direkt im Terminal.
+
+### Verwaltung
+
+```bash
+./vlr-podman.sh doctor
+./vlr-podman.sh status
+./vlr-podman.sh start-ollama
+./vlr-podman.sh stop-ollama
+./vlr-podman.sh pull-model qwen3.8:27b
+./vlr-podman.sh start-comfyui
+./vlr-podman.sh stop-comfyui
+./vlr-podman.sh stop-all
+```
+
+Der Qwen-Modelcache liegt in `vlr-ollama-models`. Der Container wird also beendet, das Modell aber nicht gelöscht.
+
+### Laufzeitdiagnose
+
+Der Webserver schreibt jede Bildgeneration als strukturiertes Ereignis auf stdout:
+
+```text
+[VLR] {"event":"generation_start", ...}
+[VLR] {"event":"generation_complete", "seconds": ...}
+[VLR] {"event":"generation_failed", "error": ...}
+```
+
+Bei einem Lauf mit zwei Kandidaten bleibt ComfyUI für beide Kandidaten aktiv und wird erst nach dem Vergleich einmal beendet. Die Kandidatenkennung und die Generationsnummer stehen sowohl im Browser-Log als auch in den Backend-Ereignissen. Auf dem Zielhost kann der Verlauf mit `journalctl --user` oder dem direkten Server-Log geprüft werden. Für Podman-Zustände sind `./vlr-podman.sh status`, `./vlr-podman.sh doctor` und `podman logs vlr-comfyui` die maßgeblichen Diagnosen.

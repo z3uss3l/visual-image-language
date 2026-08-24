@@ -1,0 +1,19 @@
+[Unit]
+Description=VLR ComfyUI phase runtime
+
+[Container]
+Image=ghcr.io/ai-dock/comfyui:latest
+ContainerName=vlr-comfyui
+PublishPort=8189:8188
+Volume=vlr-comfyui-data:/workspace
+ShmSize=2g
+AddDevice=/dev/dri
+AddDevice=/dev/kfd
+
+[Service]
+Restart=no
+TimeoutStartSec=infinity
+TimeoutStopSec=40
+
+[Install]
+WantedBy=default.target

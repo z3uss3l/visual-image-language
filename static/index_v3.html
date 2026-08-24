@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Infinity Reconstruction Lab VLR v3</title>
+<style>
+:root{color-scheme:dark;--bg:#090b10;--p:#111620;--l:#293244;--t:#e8edf5;--m:#8f9bad;--a:#79b8ff;--g:#70d394;--w:#ffd166;--b:#ff7272}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--t);font:13px/1.4 ui-monospace,monospace}
+header{padding:12px 16px;border-bottom:1px solid var(--l);display:flex;justify-content:space-between;gap:10px}
+main{display:grid;grid-template-columns:330px 1fr 360px;gap:10px;padding:10px;height:calc(100vh - 52px)}
+.p{background:var(--p);border:1px solid var(--l);border-radius:8px;padding:10px;overflow:auto}.s{border-bottom:1px solid var(--l);padding-bottom:10px;margin-bottom:10px}
+label{display:block;color:var(--m);margin:7px 0 3px}input,select,button,textarea{font:inherit}input,select,textarea{width:100%;background:#0b0e14;color:var(--t);border:1px solid var(--l);padding:7px;border-radius:5px}
+button{background:#172236;color:var(--t);border:1px solid #385071;padding:7px 10px;border-radius:5px;cursor:pointer}button:disabled{opacity:.45}.row{display:flex;gap:6px}.row>*{flex:1}
+.check{display:flex;gap:7px;align-items:center}.check input{width:auto}#boards{display:grid;grid-template-columns:1fr 1fr;gap:8px}canvas{width:100%;aspect-ratio:1;background:#000;border:1px solid var(--l)}h2{font-size:12px;color:var(--m)}
+#cand{display:grid;grid-template-columns:1fr 1fr;gap:6px}.c{border:1px solid var(--l);padding:5px}.c.sel{border-color:var(--g)}.c img{width:100%}.r{display:grid;grid-template-columns:repeat(10,1fr);gap:2px}.r button{padding:3px 0;font-size:10px}.r button.on{background:var(--a);color:#000}.small{font-size:11px;color:var(--m)}pre{white-space:pre-wrap;font:inherit;color:var(--m)}#log{white-space:pre-wrap;font-size:11px;max-height:35vh;overflow:auto}
+.badge{display:inline-block;border:1px solid var(--l);padding:2px 5px;margin:2px;border-radius:4px;font-size:10px}.ok{color:var(--g)}.warn{color:var(--w)}.bad{color:var(--b)}
+@media(max-width:1150px){main{grid-template-columns:280px 1fr}.p:last-child{grid-column:1/-1}}
+</style>
+</head>
+<body>
+<header><b>∞ INFINITY RECONSTRUCTION LAB — VLR v3</b><span id="status">initialisiere …</span></header>
+<main>
+<section class="p">
+<div class="s">
+<label>Originalbild</label><input id="file" type="file" accept="image/png,image/jpeg,image/webp">
+<div class="row"><button id="start">Start</button><button id="stop" disabled>Stop</button></div>
+<div class="small">Ein KI-Modell zur Zeit. Qwen wird vor ComfyUI explizit entladen und die Podman-Container werden phasenweise gestoppt.</div>
+</div>
+
+<div class="s">
+<label>KI-Runtime</label>
+<select id="runtime">
+<option value="podman">Podman — isolierte Phase</option>
+<option value="native">Native Ollama/ComfyUI</option>
+<option value="auto">Auto — Podman bevorzugt</option>
+</select>
+<div class="row" style="margin-top:6px"><button id="runtimeSelect">Runtime wählen</button><button id="runtimePrepare">Runtime aktivieren</button></div>
+<div id="runtimeInfo" class="small">prüfe Runtime …</div>
+</div>
+
+<div class="s">
+<label>Ollama-Modell</label><select id="model"></select><div id="modelInfo" class="small"></div>
+</div>
+
+<div class="s">
+<label>Optimierungsmodus</label>
+<select id="mode"><option value="human">Human-in-the-loop — Mensch final</option><option value="auto">Auto</option><option value="both">Score + Mensch — Mensch final</option></select>
+<label>Schwelle</label><input id="threshold" type="number" value="0.98" step="0.001">
+<label>Konsekutive Treffer</label><input id="stableN" type="number" value="3">
+<label>Plateau-Fenster</label><input id="plateauN" type="number" value="5">
+<label>Plateau-Minimum</label><input id="plateauDelta" type="number" value="0.001" step="0.001">
+<label>Varianten</label><input id="variants" type="number" min="1" max="2" value="2">
+<label>Max. Generationen</label><input id="maxGen" type="number" value="20">
+</div>
+
+<div class="s"><b>Archiv / Retention</b>
+<label>Letzte Generationen</label><input id="keepLast" type="number" value="5">
+<label>Min. Verbesserung zum Behalten</label><input id="minImprove" type="number" value="0.005" step="0.001">
+<label class="check"><input id="keepImprove" type="checkbox" checked> Verbesserungsstände behalten</label>
+<label class="check"><input id="fullHistory" type="checkbox"> Vollständige Bildhistorie</label>
+<button id="cleanup" style="width:100%;margin-top:6px">Archiv jetzt bereinigen</button>
+</div>
+
+<div class="s"><label>Aktueller Prompt</label><textarea id="prompt" rows="10"></textarea><div class="row"><button id="analyze">Nur analysieren</button><button id="meta">MetaMaster</button></div></div>
+</section>
+
+<section class="p">
+<div id="boards"><div><h2>ORIGINAL</h2><canvas id="orig" width="768" height="768"></canvas></div><div><h2>AKTUELLER GEWINNER</h2><canvas id="current" width="768" height="768"></canvas></div></div>
+<h2>KONKURRENTEN</h2><div id="cand"></div><div id="decision"></div>
+<h2>METRIKEN — ORIGINAL</h2><div id="metrics" class="small"></div>
+<h2>METRIKEN — VORHERIGER GEWINNER</h2><div id="prev" class="small"></div>
+</section>
+
+<section class="p"><h2>PHASEN</h2><div id="phase"><span class="badge">Qwen: bereit</span><span class="badge">ComfyUI: bereit</span></div>
+<h2>BESCHREIBUNG</h2><pre id="desc"></pre><h2>KONVERGENZ</h2><pre id="conv"></pre><h2>ARCHIV</h2><pre id="archive"></pre><h2>LOG</h2><div id="log"></div></section>
+</main>
+<script>
+const $=x=>document.getElementById(x),S={orig:null,current:null,running:false,g:0,prompt:'',desc:'',parent:null,cands:[],scores:[],stable:0,best:0,plateau:false};
+function log(x){$('log').textContent+='['+new Date().toLocaleTimeString()+'] '+x+'\n';$('log').scrollTop=$('log').scrollHeight}
+function phase(q,c){$('phase').innerHTML='<span class="badge">Qwen: '+q+'</span><span class="badge">ComfyUI: '+c+'</span>'}
+function draw(c,u){return new Promise((ok,no)=>{let i=new Image;i.onload=()=>{let x=c.getContext('2d'),s=Math.min(c.width/i.width,c.height/i.height),w=i.width*s,h=i.height*s;x.clearRect(0,0,c.width,c.height);x.drawImage(i,(c.width-w)/2,(c.height-h)/2,w,h);ok()};i.onerror=no;i.src=u})}
+function runtimeLabel(p){if(!p)return'kein Probeergebnis';if(p.error)return p.error;return p.vision?'Vision READY':p.chat?'Text READY':'nicht bereit'}
+async function refreshRuntime(){try{let j=await(await fetch('/api/runtime')).json();let selected=j.status.mode;$('runtime').value=selected;let p=selected==='auto'?(j.probe.podman?.vision?j.probe.podman:j.probe.native||{}):j.probe[selected]||{};let pod=j.probe.podman||{};let storage=pod.storage||{};$('runtimeInfo').textContent='Auswahl: '+selected+' · '+runtimeLabel(p)+(storage.free_gib!=null?' · Podman frei '+storage.free_gib.toFixed(1)+' GiB':'');$('runtimeInfo').className='small '+(p.vision?'ok':p.chat?'warn':'bad');return j}catch(e){$('runtimeInfo').textContent='Runtime-API nicht erreichbar';$('runtimeInfo').className='small bad'}}
+async function loadModels(){try{let m=await(await fetch('/api/ollama/models')).json();$('model').innerHTML='';m.models.forEach(x=>{let o=document.createElement('option');o.value=x.name;o.textContent=x.name;$('model').appendChild(o)});if(m.configured && [...$('model').options].some(o=>o.value===m.configured))$('model').value=m.configured;let p=m.probe||{};$('modelInfo').textContent=m.models.length+' lokale Modelle · '+runtimeLabel(p);$('modelInfo').className='small '+(p.vision?'ok':p.chat?'warn':'bad')}catch(e){$('modelInfo').textContent='Modellliste nicht erreichbar';$('modelInfo').className='small bad'}}
+async function health(){try{let j=await(await fetch('/api/health')).json();let rp=j.status?.mode==='auto'?(j.probe?.podman||j.probe?.native||{}):j.probe?.[j.status?.mode]||{};$('status').textContent='RAM frei '+(j.memory.available/1e9).toFixed(1)+' GB · '+j.status?.mode+' · Vision '+(rp.vision?'✓':'–');await refreshRuntime();await loadModels()}catch(e){$('status').textContent='Backend nicht vollständig erreichbar'}}
+health();
+$('runtimeSelect').onclick=async()=>{let mode=$('runtime').value;$('runtimeSelect').disabled=true;try{let r=await fetch('/api/runtime/select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode})});let j=await r.json();if(!r.ok)throw Error(j.detail||JSON.stringify(j));log('Runtime gewählt: '+mode);if(mode==='podman')log('Podman nutzt 11435/8189 und benötigt ein vorhandenes Ollama-Modell im Container.');await refreshRuntime();await loadModels()}catch(e){log('Runtime-Auswahl FEHLER: '+e.message)}finally{$('runtimeSelect').disabled=false}};
+$('runtimePrepare').onclick=async()=>{let mode=$('runtime').value;$('runtimePrepare').disabled=true;log('Aktiviere Runtime: '+mode);try{let r=await fetch('/api/runtime/prepare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode,model:$('model').value||undefined})});let j=await r.json();if(!r.ok)throw Error(j.detail||JSON.stringify(j));log('Runtime-Probe: '+runtimeLabel(j));await refreshRuntime();await loadModels()}catch(e){log('Runtime-Aktivierung FEHLER: '+e.message)}finally{$('runtimePrepare').disabled=false}};
+$('file').onchange=async e=>{let f=e.target.files[0];if(!f)return;S.orig=f;S.current=f;S.g=0;S.prompt='';S.scores=[];S.best=0;await draw($('orig'),URL.createObjectURL(f));await draw($('current'),URL.createObjectURL(f));let fd=new FormData;fd.append('file',f,'original.png');await fetch('/api/archive/original',{method:'POST',body:fd});log('Original archiviert.');};
+const INSTR=`Analyze this image for faithful reconstruction from words alone. Be factual, never beautify or invent. Cover canvas/framing; camera/viewpoint/perspective; global composition; every visible object with normalized x/y, relative width/height and orientation; spatial relations and overlaps; foreground/midground/background and depth; colors; lighting and shadows; materials/textures; distinctive details; typography; and explicit uncertainty. Return a reconstruction specification.`;
+async function analyze(){phase('aktiv','bereit');let fd=new FormData;fd.append('file',S.current,'frame.png');fd.append('instruction',INSTR);fd.append('model',$('model').value);let r=await fetch('/api/ollama/analyze',{method:'POST',body:fd});if(!r.ok)throw Error(await r.text());let j=await r.json();S.desc=j.text;$('desc').textContent=j.text;log('Qwen Vision/Reasoning abgeschlossen.');return j.text}
+async function text(x){let r=await fetch('/api/ollama/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:$('model').value,messages:[{role:'user',content:x}],keep_alive:'5m',options:{temperature:.1,num_ctx:4096,num_predict:1800}})});if(!r.ok)throw Error(await r.text());return (await r.json()).text.trim()}
+async function unloadQ(){let r=await fetch('/api/ollama/unload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:$('model').value})});let j=await r.json();log(j.ok?'Qwen explizit entladen.':'Qwen-Unload nicht bestätigt.');phase('entladen','bereit')}
+async function gen(p,label,g){phase('entladen','aktiv');log('ComfyUI '+label+' gestartet · Generation '+g);let r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:p,keep_runtime:true,generation:g,candidate:label})});if(!r.ok)throw Error(await r.text());let j=await r.json();log('ComfyUI '+label+' fertig · '+(j.seconds??'?')+' s');return fetch('data:'+j.content_type+';base64,'+j.image).then(x=>x.blob())}
+async function unloadC(){let j=await(await fetch('/api/comfyui/unload',{method:'POST'})).json();log(j.ok?'ComfyUI Modelle freigegeben.':'ComfyUI-Unload nicht bestätigt.');phase('entladen','freigegeben')}
+async function compare(b,ref){let fd=new FormData;fd.append('reference',ref,'reference.png');fd.append('candidate',b,'candidate.png');let r=await fetch('/api/compare',{method:'POST',body:fd});if(!r.ok)throw Error(await r.text());return r.json()}
+function mhtml(m){if(!m)return'—';return Object.entries({VLR:(m.composite*100).toFixed(2)+'%',SSIM:(m.ssim*100).toFixed(2)+'%',Edge:(m.edge_iou*100).toFixed(2)+'%',Color:(m.color_similarity*100).toFixed(2)+'%',Gradient:(m.gradient_similarity*100).toFixed(2)+'%',Thumbnail:(m.thumbnail_similarity*100).toFixed(2)+'%',PSNR:m.psnr_db.toFixed(1)+'dB'}).map(([a,b])=>a+': '+b).join(' · ')}
+function render(){let c=$('cand');c.innerHTML='';S.cands.forEach(x=>{let d=document.createElement('div');d.className='c'+(x.sel?' sel':'');d.innerHTML='<img src="'+x.url+'"><div class="small">'+x.label+' · '+(x.m.composite*100).toFixed(2)+'%</div>';let r=document.createElement('div');r.className='r';for(let n=1;n<=10;n++){let b=document.createElement('button');b.textContent=n;if(x.rating===n)b.className='on';b.onclick=e=>{e.stopPropagation();x.rating=n;render()};r.appendChild(b)}d.appendChild(r);d.onclick=()=>{S.cands.forEach(y=>y.sel=false);x.sel=true;render()};c.appendChild(d)});let human=$('mode').value!=='auto';if(human){let ready=S.cands.length&&S.cands.every(x=>x.rating)&&S.cands.some(x=>x.sel);$('decision').innerHTML='<button id="pick" '+(ready?'':'disabled')+'>Menschliche Auswahl übernehmen</button>';$('pick').onclick=()=>{$('pick').disabled=true;$('decision').resolve(S.cands.find(x=>x.sel))}}else $('decision').innerHTML=''}
+function human(){return new Promise(r=>{$('decision').resolve=r;render()})}
+async function archive(x,winner){let fd=new FormData;fd.append('image',x.blob,'image.png');fd.append('metadata',JSON.stringify({generation:S.g,label:x.label,parent_id:S.parent,prompt:x.prompt,description:S.desc,metrics:x.m,previous_match:x.prev?.composite||0,human_selected:!!x.sel,human_rating:x.rating,mutation_type:x.reason,mutation_feedback:x.reason,seed:'workflow-seed',is_winner:winner}));let r=await fetch('/api/archive',{method:'POST',body:fd});if(!r.ok)throw Error(await r.text());return (await r.json()).run_id}
+async function retain(){if($('fullHistory').checked)return;let r=await fetch('/api/retention',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current_generation:S.g,keep_last:+$('keepLast').value,keep_improvements:$('keepImprove').checked,min_improvement:+$('minImprove').value})});if(!r.ok)throw Error(await r.text())}
+async function round(){let g=S.g;log('===== GENERATION '+g+' =====');let d=await analyze();if(g===0){let r=await fetch('/api/archive/original-description',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:d})});if(!r.ok)throw Error(await r.text())}if(!S.prompt){S.prompt=await text('Convert this factual observation into a faithful image-generation prompt. Do not add unsupported style, objects or details.\n\n'+d);$('prompt').value=S.prompt}let raw=await text('Current prompt:\n'+S.prompt+'\n\nObservation:\n'+d+'\n\nGenerate exactly JSON {"a":{"prompt":"...","reason":"..."},"b":{"prompt":"...","reason":"..."}}. A must target the strongest structural/geometric weakness. B must target a different weakness such as camera, lighting, color, depth, material or composition. Preserve correct information.');let v;try{v=JSON.parse(raw)}catch{v={}}let a=v.a&&typeof v.a==='object'?v.a:{},b=v.b&&typeof v.b==='object'?v.b:{};if(typeof a.prompt!=='string'||!a.prompt.trim())a={prompt:S.prompt,reason:'fallback'};if(typeof b.prompt!=='string'||!b.prompt.trim())b={prompt:S.prompt,reason:'fallback'};await unloadQ();S.cands=[];let n=Math.max(1,Math.min(2,+$('variants').value||2));try{for(let i=0;i<n;i++){let label=String.fromCharCode(65+i),z=i?b:a,p=z.prompt||S.prompt;let blob=await gen(p,label,g),url=URL.createObjectURL(blob),m=await compare(blob,S.orig),prev=S.current!==S.orig?await compare(blob,S.current):null;S.cands.push({label,blob,url,m,prev,prompt:p,reason:z.reason||'targeted',rating:null,sel:false});log('Kandidat '+label+' · Original '+(m.composite*100).toFixed(2)+'% · vorher '+(prev?(prev.composite*100).toFixed(2):'—')+'%')}}finally{await unloadC()}render();let w;if($('mode').value==='auto')w=[...S.cands].sort((a,b)=>b.m.composite-a.m.composite)[0];else w=await human();S.cands.forEach(x=>x.sel=x===w);render();for(let x of S.cands){let id=await archive(x,x===w);if(x===w)S.parent=id;$('archive').textContent+='G'+g+' '+x.label+(x===w?' ← WINNER':'')+' '+id+'\n'}$('metrics').textContent=mhtml(w.m);$('prev').textContent=mhtml(w.prev);S.current=w.blob;S.prompt=w.prompt;$('prompt').value=w.prompt;await draw($('current'),w.url);S.scores.push(w.m.composite);S.best=Math.max(S.best,w.m.composite);S.stable=w.m.composite>=+$('threshold').value?S.stable+1:0;let pn=+$('plateauN').value,del=+$('plateauDelta').value;S.plateau=S.scores.length>=pn?Math.max(...S.scores.slice(-pn))-Math.min(...S.scores.slice(-pn))<del:false;$('conv').textContent='G'+g+' · aktuell '+(w.m.composite*100).toFixed(2)+'% · Best '+(S.best*100).toFixed(2)+'% · Schwelle '+S.stable+'/'+$('stableN').value+' · Plateau '+(S.plateau?'JA':'nein');await retain();if(S.stable>=+$('stableN').value||S.plateau||g+1>=+$('maxGen').value){S.running=false;log('Loop beendet.');return}S.g++}
+async function loop(){while(S.running){try{await round()}catch(e){log('FEHLER: '+e.message);S.running=false}if(S.running)await new Promise(r=>setTimeout(r,300))}}
+$('start').onclick=async()=>{if(!S.orig){alert('Bitte Original laden.');return}S.running=true;$('start').disabled=true;$('stop').disabled=false;await loop();$('start').disabled=false;$('stop').disabled=true};$('stop').onclick=()=>{S.running=false;log('Loop gestoppt.')};$('analyze').onclick=async()=>{try{await analyze();S.prompt=await text('Make a faithful reconstruction prompt from this observation:\n'+S.desc);$('prompt').value=S.prompt;await unloadQ()}catch(e){log(e.message)}};$('cleanup').onclick=async()=>{try{let r=await fetch('/api/retention',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current_generation:S.g,keep_last:+$('keepLast').value,keep_improvements:$('keepImprove').checked,min_improvement:+$('minImprove').value,full_history:$('fullHistory').checked})});let j=await r.json();if(!r.ok)throw Error(j.detail||JSON.stringify(j));log('Retention: '+j.mode)}catch(e){log('Retention FEHLER: '+e.message)}};$('meta').onclick=async()=>{let rows=await(await fetch('/api/history?limit=200')).json(),w=rows.filter(x=>x.is_winner||x.human_selected).reverse().slice(-50);if(!w.length){log('Noch keine erfolgreichen Linien.');return}let material=w.map((x,i)=>`PROMPT ${i+1}:\n${x.prompt}\nSCORE:${x.original_match}\nHUMAN:${x.human_rating??'none'}\nMUTATION:${x.mutation_type||'none'}`).join('\n\n');try{let t=await text('Extract recurring evidence-supported patterns and create a reusable MASTER PROMPT TEMPLATE with SCENE, CAMERA, COMPOSITION, OBJECTS, NORMALIZED POSITION, RELATIVE SCALE, SPATIAL RELATIONS, DEPTH, GEOMETRY, COLOR, LIGHT, MATERIAL, TEXTURE, BACKGROUND, MICRO-DETAILS, UNCERTAINTY. Do not claim universal validity without evidence.\n\n'+material);$('prompt').value=t;let r=await fetch('/api/archive/meta',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'metadata='+encodeURIComponent(JSON.stringify({content:t,source_count:w.length}))});if(!r.ok)throw Error(await r.text());await unloadQ();log('MetaMaster archiviert.')}catch(e){log(e.message)}};
+</script>
+</body></html>

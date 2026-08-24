@@ -1,0 +1,21 @@
+[Unit]
+Description=VLR Ollama phase runtime
+
+[Container]
+Image=docker.io/ollama/ollama:latest
+ContainerName=vlr-ollama
+PublishPort=11435:11434
+Volume=vlr-ollama-models:/root/.ollama
+Environment=OLLAMA_VULKAN=1
+Environment=OLLAMA_IGPU_ENABLE=1
+ShmSize=1g
+AddDevice=/dev/dri
+AddDevice=/dev/kfd
+
+[Service]
+Restart=no
+TimeoutStartSec=infinity
+TimeoutStopSec=40
+
+[Install]
+WantedBy=default.target

@@ -83,6 +83,7 @@ PY
   "$PODMAN_BIN" exec "$VLR_OLLAMA_CONTAINER" ollama show "$MODEL" >/dev/null
   echo "[VLR] Modell bereit im persistenten Volume: $MODEL"
 }
-need
 case "${1:-}" in
+ help|-h|--help) usage; exit 0;;
  status) status;; doctor) doctor;; preflight) preflight;; start-ollama) start_ollama;; stop-ollama) stop_ollama;; start-comfyui) start_comfyui;; stop-comfyui) stop_comfyui;; stop-all) stop_all;; pull-model) pull_model "${2:-}";; *) usage; exit 2;; esac
+

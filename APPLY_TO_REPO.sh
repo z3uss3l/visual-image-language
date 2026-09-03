@@ -4,10 +4,12 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 TARGET="${1:-.}"
 cd "$TARGET"
 
-for f in APPLY_TO_REPO.sh app.py vlr_core.py vlr_runtime.py README.md setup setup.sh prepare-performance.sh storage-audit.sh vlr-podman.sh CONTAINER_RUNTIME.md verify.sh COMMIT_MESSAGE.txt requirements.txt; do
+for f in APPLY_TO_REPO.sh app.py vlr_core.py vlr_runtime.py README.md setup setup.sh prepare-performance.sh storage-audit.sh vlr-podman.sh deploy_zinc.sh control.sh CONTAINER_RUNTIME.md verify.sh COMMIT_MESSAGE.txt requirements.txt; do
   mkdir -p "$(dirname "$f")"
   cp -f "$ROOT/$f" "$f"
 done
+
+
 mkdir -p static tests config config/quadlet
 cp -f "$ROOT/static/index_v3.html" static/index_v3.html
 cp -f "$ROOT/tests/"test_*.py tests/
@@ -24,7 +26,10 @@ done
 
 ./verify.sh
 
-git diff --check
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  git diff --check
+fi
 printf '\nReady for commit.\n'
 printf 'Suggested commit: %s' "$(cat COMMIT_MESSAGE.txt)"
 printf '\nThen: git add -A && git commit -F COMMIT_MESSAGE.txt && git push origin dev\n'
+

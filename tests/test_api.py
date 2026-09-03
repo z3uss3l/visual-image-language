@@ -41,5 +41,17 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         setter.assert_called_once_with('native')
 
+    def test_sota_model_resolution_and_fallback(self):
+        from vlr_core import resolve_model, SOTA_MODEL_PRIORITY
+        with patch('vlr_core.models', return_value=[{'name': 'gemma4:12b'}]):
+            self.assertEqual(resolve_model('uninstalled-model:latest'), 'gemma4:12b')
+            self.assertEqual(resolve_model('gemma4:12b'), 'gemma4:12b')
+
+        r = self.client.get('/api/ollama/models')
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('sota_recommendations', r.json())
+        self.assertEqual(r.json()['sota_recommendations'], SOTA_MODEL_PRIORITY)
+
 if __name__ == '__main__':
     unittest.main()
+

@@ -71,14 +71,37 @@ def cmp(a,b):
  ah=cv2.cvtColor(a,cv2.COLOR_BGR2HSV);bh=cv2.cvtColor(b,cv2.COLOR_BGR2HSV);ha=cv2.calcHist([ah],[0,1],None,[32,32],[0,180,0,256]);hb=cv2.calcHist([bh],[0,1],None,[32,32],[0,180,0,256]);cv2.normalize(ha,ha);cv2.normalize(hb,hb);color=max(0,min(1,(float(cv2.compareHist(ha,hb,cv2.HISTCMP_CORREL))+1)/2))
  ga=cv2.Laplacian(ag,cv2.CV_32F);gb=cv2.Laplacian(bg,cv2.CV_32F);ga=(ga-ga.mean())/(ga.std()+1e-6);gb=(gb-gb.mean())/(gb.std()+1e-6);g=max(0,min(1,(cos(ga.ravel(),gb.ravel())+1)/2));ta=cv2.resize(a,(32,32),interpolation=cv2.INTER_AREA).astype(np.float32);tb=cv2.resize(b,(32,32),interpolation=cv2.INTER_AREA).astype(np.float32);t=max(0,min(1,(cos(ta.ravel(),tb.ravel())+1)/2));score=.28*s+.18*e+.18*color+.18*g+.18*t
  return {'mse':mse,'psnr_db':float(cv2.PSNR(a,b)) if mse else 99.0,'ssim':s,'edge_iou':e,'color_similarity':color,'gradient_similarity':g,'thumbnail_similarity':t,'composite':float(score),'threshold_98':score>=.98,'metric_version':'vlr-composite-v3'}
+SOTA_MODEL_PRIORITY = [
+    'qwen3.8:27b', 'gemma4:31b', 'glm-5.3-flash:18b', 'qwen3-vl:30b',
+    'gemma4:12b', 'nemotron-3.5:30b', 'deepseek-v4:28b', 'qwen3-vl:8b',
+    'qwen2.5-vl:7b', 'llama3.2-vision:11b', 'llava:13b', 'gemma4:e4b',
+    'qwen3-vl:2b'
+]
+
+
+def resolve_model(requested_model=None):
+    target = requested_model or OLLAMA_MODEL
+    avail = [x.get('name') for x in models() if x.get('name')]
+    if not avail or target in avail:
+        return target
+    for pref in SOTA_MODEL_PRIORITY:
+        if pref in avail:
+            return pref
+    for m in avail:
+        if any(v in m.lower() for v in ('vl', 'vision', 'llava', 'qwen', 'gemma', 'llama')):
+            return m
+    return avail[0]
+
 def chat(messages,model=None,keep=None,options=None):
- p={'model':model or OLLAMA_MODEL,'messages':messages,'stream':False,'keep_alive':OLLAMA_PHASE_KEEP_ALIVE if keep is None else keep,'options':options or {'temperature':.1,'num_ctx':4096,'num_predict':1800}}
+ m=resolve_model(model)
+ p={'model':m,'messages':messages,'stream':False,'keep_alive':OLLAMA_PHASE_KEEP_ALIVE if keep is None else keep,'options':options or {'temperature':.1,'num_ctx':4096,'num_predict':1800}}
  try:r=req(f'{ollama_url()}/api/chat','post',OLLAMA_TIMEOUT,json=p);r.raise_for_status();j=r.json();return j.get('message',{}).get('content','').strip(),j
  except requests.RequestException as e:raise HTTPException(502,f'Ollama request failed: {e}')
 def unload_ollama(model=None):
- m=model or OLLAMA_MODEL
+ m=resolve_model(model)
  try:r=req(f'{ollama_url()}/api/generate','post',30,json={'model':m,'prompt':'','stream':False,'keep_alive':0});return r.ok
  except requests.RequestException:return False
+
 def free_comfy():
  try:r=req(f'{comfyui_url()}/free','post',10,json={'unload_models':True,'free_memory':True});return r.ok
  except requests.RequestException:return False

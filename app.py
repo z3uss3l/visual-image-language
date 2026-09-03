@@ -21,7 +21,8 @@ def health():
 def resources():return {'memory':mem(),'runtime':runtime_status(),'probe':runtime_probe(model=OLLAMA_MODEL),'ollama_running':running(),'comfyui':comfy()}
 @app.get('/api/ollama/models')
 def model_list():
- ms=models(); return {'ok':bool(ms),'url':ollama_url(),'configured':OLLAMA_MODEL,'models':ms,'probe':runtime_probe(model=OLLAMA_MODEL)}
+ ms=models(); active=resolve_model(OLLAMA_MODEL); return {'ok':bool(ms),'url':ollama_url(),'configured':OLLAMA_MODEL,'active_model':active,'sota_recommendations':SOTA_MODEL_PRIORITY,'models':ms,'probe':runtime_probe(model=OLLAMA_MODEL)}
+
 @app.post('/api/ollama/chat')
 def ollama_api(request:dict):
  if not request.get('messages'):raise HTTPException(400,'Ollama messages fehlen.')

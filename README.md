@@ -44,9 +44,18 @@ Standard ist:
 qwen3.8:27b
 ```
 
-Das Modell wird **nicht automatisch heruntergeladen**. Das Setup verwendet ein bereits lokal vorhandenes Modell und warnt lediglich, wenn es nicht sichtbar ist.
+### Empfohlene SOTA-Modelle (Stand September 2026, ohne API-Key)
 
-Ein anderes Modell kann über `MODEL=... ./setup.sh` konfiguriert werden.
+1. **`qwen3.8:27b` / `gemma4:31b`** (SOTA High — 24–32 GB RAM/VRAM): Höchste räumliche und geometrische Präzision.
+2. **`glm-5.3-flash:18b`** (SOTA Agentic — 16–24 GB VRAM): Ultra-schnelle visuelle Wahrnehmung (MoE mit 18B aktiven Parametern).
+3. **`qwen3-vl:30b`** (SOTA Vision/OCR — 24 GB VRAM): Spezialisiert auf Dokumenten- und Layout-Analysen.
+4. **`gemma4:12b` / `qwen3-vl:8b`** (SOTA Mid — 8–16 GB VRAM): Optimales Verhältnis aus Geschwindigkeit und Multimodalität.
+5. **`qwen2.5-vl:7b` / `gemma4:e4b`** (SOTA Light — <8 GB VRAM): Leichtgewichtiger Fallback.
+
+Das System verwendet automatische Modellauflösung (Auto-Fallback): Falls das konfigurierte Standardmodell lokal nicht vorhanden ist, wählt VLR automatisch das höchstpriorisierte lokal vorhandene SOTA-Modell aus.
+
+Ein abweichendes Modell kann über `MODEL=... ./setup.sh` konfiguriert werden.
+
 
 ## Architektur
 
